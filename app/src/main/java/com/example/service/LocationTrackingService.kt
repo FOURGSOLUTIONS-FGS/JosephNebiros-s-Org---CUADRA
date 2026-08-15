@@ -1,4 +1,4 @@
-﻿package com.example.service
+package com.example.service
 
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -18,9 +18,9 @@ import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.data.db.AppDatabase
+import com.example.data.remote.SupabaseClient
+import com.example.data.remote.SupabaseGpsDto
 import com.example.data.repository.CobranzaRepository
-import com.example.data.remote.GpsLocationDto
-import com.example.data.remote.RetrofitClient
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -92,6 +92,16 @@ class LocationTrackingService : Service() {
 
         private val _elapsedSeconds = MutableStateFlow(0L)
         val elapsedSeconds: StateFlow<Long> = _elapsedSeconds.asStateFlow()
+
+        // Cloud real-time sync state (Supabase / Vercel Admin)
+        private val _cloudSyncStatus = MutableStateFlow("En espera")
+        val cloudSyncStatus: StateFlow<String> = _cloudSyncStatus.asStateFlow()
+
+        private val _cloudSyncSuccessCount = MutableStateFlow(0)
+        val cloudSyncSuccessCount: StateFlow<Int> = _cloudSyncSuccessCount.asStateFlow()
+
+        private val _lastCloudSyncTimestamp = MutableStateFlow<Long?>(null)
+        val lastCloudSyncTimestamp: StateFlow<Long?> = _lastCloudSyncTimestamp.asStateFlow()
 
         fun startService(context: Context, sessionId: String? = null) {
             val sid = sessionId ?: ("RUTA_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date()))
@@ -294,6 +304,7 @@ class LocationTrackingService : Service() {
         lastRecordedLocation = location
         _pointsRecordedCount.value += 1
 
+        // 1. Record point locally in Room Database
         serviceScope.launch {
             try {
                 repository.recordRoutePoint(
@@ -305,7 +316,48 @@ class LocationTrackingService : Service() {
                     accuracy = if (location.hasAccuracy()) location.accuracy else 0f
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "Error saving route point: ${e.message}")
+                Log.e(TAG, "Error saving route point locally: ${e.message}")
+            }
+        }
+
+        // 2. Transmit coordinates in real-time to Supabase (gps_tracking table)
+        // using SupabaseClient (Retrofit/OkHttp) for live dashboard tracking
+        val routeCode = currentSessionId.ifEmpty { "RUTA_BARRANQUILLA_01" }
+        val speedIntKmh = speedKmh.toInt()
+        val speedFormatted = "$speedIntKmh km/h"
+
+        serviceScope.launch {
+            try {
+                val gpsDto = SupabaseGpsDto(
+                    routeCode = routeCode,
+                    lat = location.latitude,
+                    lng = location.longitude,
+                    speed = speedFormatted,
+                    lastSync = "En vivo"
+                )
+                val response = SupabaseClient.apiService.postGpsTracking(gpsDto)
+                if (response.isSuccessful || response.code() in 200..299) {
+                    _cloudSyncSuccessCount.value += 1
+                    _lastCloudSyncTimestamp.value = System.currentTimeMillis()
+                    _cloudSyncStatus.value = "Sincronizado Supabase en vivo"
+                } else {
+                    _cloudSyncStatus.value = "Transmisión enviada"
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error transmitting GPS via Retrofit, trying direct client: ${e.message}")
+                try {
+                    val isSuccess = SupabaseGpsClient.sendGpsLocation(routeCode, location)
+                    if (isSuccess) {
+                        _cloudSyncSuccessCount.value += 1
+                        _lastCloudSyncTimestamp.value = System.currentTimeMillis()
+                        _cloudSyncStatus.value = "Sincronizado Supabase en vivo"
+                    } else {
+                        _cloudSyncStatus.value = "Transmisión enviada"
+                    }
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Error in Supabase GPS fallback: ${e2.message}")
+                    _cloudSyncStatus.value = "Error conexión Supabase"
+                }
             }
         }
     }

@@ -9,11 +9,13 @@ import com.example.data.dao.ClientDao
 import com.example.data.dao.ExpenseDao
 import com.example.data.dao.LoanDao
 import com.example.data.dao.PaymentDao
+import com.example.data.dao.ReminderDao
 import com.example.data.dao.RouteDao
 import com.example.data.model.ClientEntity
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.LoanEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.model.ReminderEntity
 import com.example.data.model.RoutePointEntity
 import com.example.data.model.TrackingSessionEntity
 import kotlinx.coroutines.CoroutineScope
@@ -27,9 +29,10 @@ import kotlinx.coroutines.launch
         PaymentEntity::class,
         RoutePointEntity::class,
         TrackingSessionEntity::class,
-        ExpenseEntity::class
+        ExpenseEntity::class,
+        ReminderEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun paymentDao(): PaymentDao
     abstract fun routeDao(): RouteDao
     abstract fun expenseDao(): ExpenseDao
+    abstract fun reminderDao(): ReminderDao
 
     companion object {
         @Volatile
@@ -50,6 +54,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "cobrador_diario_database"
                 )
+                    .fallbackToDestructiveMigration()
                     .addCallback(DatabaseCallback(context))
                     .build()
                 INSTANCE = instance
@@ -241,6 +246,30 @@ abstract class AppDatabase : RoomDatabase() {
             db.loanDao().insertLoan(loan4)
             db.loanDao().insertLoan(loan5)
             db.loanDao().insertLoan(loan6)
+
+            // Seed initial reminders for collectors
+            db.reminderDao().insertReminder(
+                ReminderEntity(
+                    clientId = id1,
+                    clientName = "María González",
+                    title = "Confirmar abono de la tarde",
+                    dueTimeFormatted = "04:30 PM",
+                    dueDateMillis = System.currentTimeMillis() + (3 * 60 * 60 * 1000),
+                    notes = "Pidió pasar después de las 4:30 PM porque llega del banco.",
+                    priority = "URGENTE"
+                )
+            )
+            db.reminderDao().insertReminder(
+                ReminderEntity(
+                    clientId = id2,
+                    clientName = "Carlos Mendoza",
+                    title = "Llevar recibo físico de cuota 12",
+                    dueTimeFormatted = "02:00 PM",
+                    dueDateMillis = System.currentTimeMillis() + (1 * 60 * 60 * 1000),
+                    notes = "Solicitó comprobante impreso para su contabilidad.",
+                    priority = "NORMAL"
+                )
+            )
 
             // Seed initial Barranquilla tracking route session
             val sessionName = "RUTA_BARRANQUILLA_CENTRO_NORTE"

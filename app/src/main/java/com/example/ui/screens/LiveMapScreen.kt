@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
@@ -66,9 +67,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.model.ClientEntity
 import com.example.data.model.ClientWithActiveLoan
+import com.example.data.model.LoanEntity
+import com.example.ui.components.ConfirmPaymentPromptDialog
 import com.example.ui.components.MapRouteCanvas
 import com.example.ui.components.PaymentDialog
+import com.example.ui.components.PaymentSuccessDisplay
+import com.example.ui.components.PaymentSuccessModal
+import com.example.ui.components.PendingPaymentConfirmation
 import com.example.ui.components.ReceiptDialog
 import com.example.ui.theme.AmberContainer
 import com.example.ui.theme.AmberWarning
@@ -116,10 +123,14 @@ fun LiveMapScreen(
     val currentBearing by viewModel.currentBearing.collectAsStateWithLifecycle()
     val accuracyMeters by viewModel.accuracyMeters.collectAsStateWithLifecycle()
     val elapsedSeconds by viewModel.elapsedSeconds.collectAsStateWithLifecycle()
+    val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsStateWithLifecycle()
+    val cloudSyncSuccessCount by viewModel.cloudSyncSuccessCount.collectAsStateWithLifecycle()
 
     var autoFollow by remember { mutableStateOf(true) }
     var selectedClientForPopup by remember { mutableStateOf<ClientWithActiveLoan?>(null) }
     var selectedClientForPayment by remember { mutableStateOf<ClientWithActiveLoan?>(null) }
+    var pendingConfirmation by remember { mutableStateOf<PendingPaymentConfirmation?>(null) }
+    var paymentSuccessInfo by remember { mutableStateOf<PaymentSuccessDisplay?>(null) }
     var showReceiptText by remember { mutableStateOf<String?>(null) }
 
     val activeSession = trackingSessions.find { it.sessionId == selectedSessionId }
@@ -223,28 +234,55 @@ fun LiveMapScreen(
             // Active elapsed stopwatch if tracking is running
             if (isTrackingActive) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = SlateNavy.copy(alpha = 0.92f),
-                    shadowElevation = 6.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = SlateNavy.copy(alpha = 0.92f),
+                        shadowElevation = 6.dp
                     ) {
-                        Icon(
-                            Icons.Default.Timer,
-                            contentDescription = null,
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Tiempo: $elapsedTimeFormatted",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Timer,
+                                contentDescription = null,
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Tiempo: $elapsedTimeFormatted",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = SlateNavy.copy(alpha = 0.92f),
+                        shadowElevation = 6.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Sync,
+                                contentDescription = null,
+                                tint = if (cloudSyncSuccessCount > 0) Color(0xFF34D399) else Color(0xFF38BDF8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Supabase / Admin ($cloudSyncSuccessCount)",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }
@@ -553,12 +591,62 @@ fun LiveMapScreen(
             onDismiss = { selectedClientForPayment = null },
             onConfirmPayment = { amount, notes, method ->
                 item.activeLoan?.let { loan ->
-                    viewModel.registerPayment(item.client, loan, amount, notes, method)
-                    val receiptText = viewModel.generatePaymentReceiptText(item.client, loan, amount)
-                    showReceiptText = receiptText
+                    pendingConfirmation = PendingPaymentConfirmation(
+                        client = item.client,
+                        loan = loan,
+                        amount = amount,
+                        method = method,
+                        notes = notes
+                    )
                 }
+                selectedClientForPayment = null
             },
             onShowReceipt = { receiptText -> showReceiptText = receiptText }
+        )
+    }
+
+    // Step 2: Collector Confirmation Prompt Dialog
+    pendingConfirmation?.let { pending ->
+        ConfirmPaymentPromptDialog(
+            client = pending.client,
+            loan = pending.loan,
+            amount = pending.amount,
+            paymentMethod = pending.method,
+            notes = pending.notes,
+            onDismiss = { pendingConfirmation = null },
+            onConfirmed = {
+                viewModel.registerPayment(
+                    client = pending.client,
+                    loan = pending.loan,
+                    amount = pending.amount,
+                    notes = pending.notes,
+                    paymentMethod = pending.method
+                )
+                val receiptText = viewModel.generatePaymentReceiptText(pending.client, pending.loan, pending.amount)
+                val newBal = (pending.loan.remainingBalance - pending.amount).coerceAtLeast(0.0)
+                val nextQ = pending.loan.paidQuotas + 1
+
+                paymentSuccessInfo = PaymentSuccessDisplay(
+                    clientName = pending.client.name,
+                    amount = pending.amount,
+                    quotaNumber = nextQ,
+                    remainingBalance = newBal,
+                    receiptText = receiptText
+                )
+                pendingConfirmation = null
+            }
+        )
+    }
+
+    // Step 3: Success Confirmation Modal with WhatsApp & Receipt
+    paymentSuccessInfo?.let { success ->
+        PaymentSuccessModal(
+            clientName = success.clientName,
+            amount = success.amount,
+            quotaNumber = success.quotaNumber,
+            remainingBalance = success.remainingBalance,
+            receiptText = success.receiptText,
+            onDismiss = { paymentSuccessInfo = null }
         )
     }
 

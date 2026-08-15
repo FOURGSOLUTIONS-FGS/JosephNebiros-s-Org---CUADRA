@@ -85,7 +85,7 @@ fun MapRouteCanvas(
     onAutoFollowChanged: (Boolean) -> Unit = {},
     onClientMarkerClick: (ClientWithActiveLoan) -> Unit = {}
 ) {
-    var scale by remember { mutableFloatStateOf(1.3f) }
+    var scale by remember { mutableFloatStateOf(1.0f) }
     var panOffset by remember { mutableStateOf(Offset.Zero) }
 
     // Pulsing radar animation for live tracking dot
@@ -124,7 +124,7 @@ fun MapRouteCanvas(
             .background(Color(0xFF090E17))
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(0.5f, 9.0f)
+                    scale = (scale * zoom).coerceIn(0.15f, 20.0f)
                     panOffset += pan
                     onAutoFollowChanged(false)
                 }
@@ -423,13 +423,13 @@ fun MapRouteCanvas(
             }
         }
 
-        // Overlay Navigation Controls (Top-Right)
+        // Overlay Navigation Controls (Shifted down to avoid overlapping with top status chips/bubbles)
         Surface(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(16.dp),
+                .padding(top = 78.dp, end = 14.dp),
             shape = RoundedCornerShape(18.dp),
-            color = SlateNavy.copy(alpha = 0.92f),
+            color = SlateNavy.copy(alpha = 0.94f),
             shadowElevation = 8.dp
         ) {
             Column(
@@ -437,25 +437,31 @@ fun MapRouteCanvas(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 IconButton(
-                    onClick = { scale = (scale * 1.3f).coerceAtMost(9.0f) },
-                    modifier = Modifier.size(44.dp)
+                    onClick = {
+                        scale = (scale * 1.35f).coerceAtMost(20.0f)
+                        onAutoFollowChanged(false)
+                    },
+                    modifier = Modifier.size(42.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = Color.White)
-                }
-                IconButton(
-                    onClick = { scale = (scale / 1.3f).coerceAtLeast(0.5f) },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(Icons.Default.Remove, contentDescription = "Zoom Out", tint = Color.White)
+                    Icon(Icons.Default.Add, contentDescription = "Aumentar Zoom", tint = Color.White)
                 }
                 IconButton(
                     onClick = {
-                        scale = 1.3f
+                        scale = (scale / 1.35f).coerceAtLeast(0.15f)
+                        onAutoFollowChanged(false)
+                    },
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(Icons.Default.Remove, contentDescription = "Disminuir Zoom", tint = Color.White)
+                }
+                IconButton(
+                    onClick = {
+                        scale = 1.0f
                         panOffset = Offset.Zero
                         onAutoFollowChanged(true)
                     },
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(42.dp)
                         .background(
                             if (autoFollow) GeometricAccent.copy(alpha = 0.35f) else Color.Transparent,
                             CircleShape
@@ -463,7 +469,7 @@ fun MapRouteCanvas(
                 ) {
                     Icon(
                         if (autoFollow) Icons.Default.GpsFixed else Icons.Default.MyLocation,
-                        contentDescription = "Auto-seguir",
+                        contentDescription = "Centrar en mi ubicación",
                         tint = if (autoFollow) GeometricAccentLight else Slate400
                     )
                 }

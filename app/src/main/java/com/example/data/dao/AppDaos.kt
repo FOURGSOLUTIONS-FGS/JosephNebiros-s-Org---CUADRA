@@ -10,6 +10,7 @@ import com.example.data.model.ClientEntity
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.LoanEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.model.ReminderEntity
 import com.example.data.model.RoutePointEntity
 import com.example.data.model.TrackingSessionEntity
 import kotlinx.coroutines.flow.Flow
@@ -82,6 +83,12 @@ interface PaymentDao {
     @Query("SELECT * FROM payments WHERE loanId = :loanId AND date >= :startOfDay AND date <= :endOfDay LIMIT 1")
     suspend fun getTodayPaymentForLoan(loanId: Long, startOfDay: Long, endOfDay: Long): PaymentEntity?
 
+    @Query("SELECT * FROM payments WHERE isSyncedWithCloud = 0")
+    suspend fun getUnsyncedPayments(): List<PaymentEntity>
+
+    @Query("UPDATE payments SET isSyncedWithCloud = 1 WHERE id = :paymentId")
+    suspend fun markPaymentSynced(paymentId: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayment(payment: PaymentEntity): Long
 
@@ -90,6 +97,33 @@ interface PaymentDao {
 
     @Query("SELECT SUM(amount) FROM payments WHERE date >= :startOfDay AND date <= :endOfDay")
     fun getTotalCollectedBetween(startOfDay: Long, endOfDay: Long): Flow<Double?>
+}
+
+@Dao
+interface ReminderDao {
+    @Query("SELECT * FROM client_reminders ORDER BY isCompleted ASC, dueDateMillis ASC")
+    fun getAllReminders(): Flow<List<ReminderEntity>>
+
+    @Query("SELECT * FROM client_reminders WHERE isCompleted = 0 ORDER BY dueDateMillis ASC")
+    fun getPendingReminders(): Flow<List<ReminderEntity>>
+
+    @Query("SELECT * FROM client_reminders WHERE clientId = :clientId ORDER BY isCompleted ASC, dueDateMillis ASC")
+    fun getRemindersForClient(clientId: Long): Flow<List<ReminderEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReminder(reminder: ReminderEntity): Long
+
+    @Update
+    suspend fun updateReminder(reminder: ReminderEntity)
+
+    @Query("UPDATE client_reminders SET isCompleted = :completed WHERE id = :id")
+    suspend fun setReminderCompleted(id: Long, completed: Boolean)
+
+    @Delete
+    suspend fun deleteReminder(reminder: ReminderEntity)
+
+    @Query("SELECT COUNT(*) FROM client_reminders WHERE isCompleted = 0")
+    fun getPendingRemindersCount(): Flow<Int>
 }
 
 @Dao

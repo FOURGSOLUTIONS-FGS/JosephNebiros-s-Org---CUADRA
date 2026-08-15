@@ -41,11 +41,13 @@ import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -77,9 +79,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.ClientWithActiveLoan
 import com.example.ui.components.AddClientDialog
 import com.example.ui.components.AddLoanDialog
+import com.example.ui.components.ConfirmPaymentPromptDialog
+import com.example.ui.components.DidiCollectorHudCard
+import com.example.ui.components.GoogleMapRouteView
 import com.example.ui.components.MapRouteCanvas
 import com.example.ui.components.PaymentDialog
+import com.example.ui.components.PaymentSuccessDisplay
+import com.example.ui.components.PaymentSuccessModal
+import com.example.ui.components.PendingPaymentConfirmation
+import com.example.ui.components.PhotoCaptureDialog
 import com.example.ui.components.ReceiptDialog
+import com.example.ui.components.RemindersDialog
+import com.example.data.model.ClientEntity
+import com.example.data.model.LoanEntity
+import com.example.util.NavigationUtils
 import com.example.ui.theme.EmeraldContainer
 import com.example.ui.theme.EmeraldDark
 import com.example.ui.theme.EmeraldGreen
@@ -110,6 +123,7 @@ fun RouteScreen(
     val context = LocalContext.current
     val dailyRouteList by viewModel.dailyRouteList.collectAsStateWithLifecycle()
     val allClients by viewModel.allClients.collectAsStateWithLifecycle()
+    val allReminders by viewModel.allReminders.collectAsStateWithLifecycle()
     val isTrackingActive by viewModel.isTrackingActive.collectAsStateWithLifecycle()
     val currentLocation by viewModel.currentLocation.collectAsStateWithLifecycle()
     val pointsCount by viewModel.pointsCount.collectAsStateWithLifecycle()
@@ -117,13 +131,32 @@ fun RouteScreen(
     val selectedSessionPoints by viewModel.selectedSessionPoints.collectAsStateWithLifecycle()
     val currentBearing by viewModel.currentBearing.collectAsStateWithLifecycle()
     val accuracyMeters by viewModel.accuracyMeters.collectAsStateWithLifecycle()
+    val isSyncingRoute by viewModel.isSyncingRoute.collectAsStateWithLifecycle()
 
     var showMapPreview by remember { mutableStateOf(true) }
+    var useGoogleMaps by remember { mutableStateOf(false) }
     var filterType by remember { mutableStateOf("TODOS") } // TODOS, PENDIENTES, COBRADOS
     var selectedClientForPayment by remember { mutableStateOf<ClientWithActiveLoan?>(null) }
+    var pendingConfirmation by remember { mutableStateOf<PendingPaymentConfirmation?>(null) }
+    var paymentSuccessInfo by remember { mutableStateOf<PaymentSuccessDisplay?>(null) }
     var showAddClientDialog by remember { mutableStateOf(false) }
     var showAddLoanDialog by remember { mutableStateOf(false) }
     var showReceiptText by remember { mutableStateOf<String?>(null) }
+    var selectedClientForPhoto by remember { mutableStateOf<ClientWithActiveLoan?>(null) }
+    var selectedClientForReminders by remember { mutableStateOf<ClientWithActiveLoan?>(null) }
+    var currentStopIndex by remember { mutableStateOf(0) }
+
+    // Identify current pending target for DiDi HUD
+    val pendingStops = remember(dailyRouteList) {
+        dailyRouteList.filter { !it.isCollectedToday }
+    }
+    val currentHudStop = remember(pendingStops, dailyRouteList, currentStopIndex) {
+        if (pendingStops.isNotEmpty()) {
+            pendingStops[currentStopIndex.coerceIn(0, pendingStops.size - 1)]
+        } else {
+            dailyRouteList.firstOrNull()
+        }
+    }
 
     val filteredList = remember(dailyRouteList, filterType) {
         when (filterType) {
@@ -179,36 +212,65 @@ fun RouteScreen(
                                 )
                             }
 
-                            // GPS Foreground Tracking Toggle Button
-                            Button(
-                                onClick = {
-                                    if (isTrackingActive) {
-                                        viewModel.stopRouteTracking(context)
-                                    } else {
-                                        onRequestLocationPermission()
-                                        viewModel.startRouteTracking(context)
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isTrackingActive) RoseDanger else EmeraldGreen
-                                ),
-                                shape = RoundedCornerShape(20.dp),
-                                modifier = Modifier.testTag("toggle_tracking_button")
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (isTrackingActive) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .alpha(pulseAlpha)
-                                                .background(Color.White, CircleShape)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Sync Route from Supabase Button (for offline prep)
+                                IconButton(
+                                    onClick = {
+                                        viewModel.syncRouteFromSupabase { success, msg ->
+                                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("sync_route_button")
+                                ) {
+                                    if (isSyncingRoute) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            color = Color.White,
+                                            strokeWidth = 2.dp
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("GPS En Vivo ($pointsCount)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     } else {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Iniciar Ruta", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = "Sincronizar Ruta Supabase",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(6.dp))
+
+                                // GPS Foreground Tracking Toggle Button
+                                Button(
+                                    onClick = {
+                                        if (isTrackingActive) {
+                                            viewModel.stopRouteTracking(context)
+                                        } else {
+                                            onRequestLocationPermission()
+                                            viewModel.startRouteTracking(context)
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isTrackingActive) RoseDanger else EmeraldGreen
+                                    ),
+                                    shape = RoundedCornerShape(20.dp),
+                                    modifier = Modifier.testTag("toggle_tracking_button")
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (isTrackingActive) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .alpha(pulseAlpha)
+                                                    .background(Color.White, CircleShape)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("GPS En Vivo ($pointsCount)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        } else {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Iniciar Ruta", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }
@@ -292,13 +354,14 @@ fun RouteScreen(
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { showMapPreview = !showMapPreview },
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.clickable { showMapPreview = !showMapPreview }
+                                    ) {
                                         Icon(
                                             Icons.Default.Map,
                                             contentDescription = null,
@@ -307,7 +370,7 @@ fun RouteScreen(
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "Mapa de Ruta en Vivo",
+                                            text = if (useGoogleMaps) "Google Maps" else "Radar Satelital",
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White
@@ -320,7 +383,7 @@ fun RouteScreen(
                                                 modifier = Modifier.padding(horizontal = 4.dp)
                                             ) {
                                                 Text(
-                                                    "GPS ACTIVO",
+                                                    "EN VIVO",
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     color = Color.White,
@@ -330,15 +393,34 @@ fun RouteScreen(
                                         }
                                     }
 
-                                    IconButton(
-                                        onClick = { showMapPreview = !showMapPreview },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(
-                                            if (showMapPreview) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                            contentDescription = "Alternar mapa",
-                                            tint = Color.White
-                                        )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        // Mode switch button (Google Maps vs Canvas)
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (useGoogleMaps) GeometricAccent else Slate700,
+                                            modifier = Modifier.clickable { useGoogleMaps = !useGoogleMaps }
+                                        ) {
+                                            Text(
+                                                text = if (useGoogleMaps) "Modo Google Maps" else "Modo Radar",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.width(4.dp))
+
+                                        IconButton(
+                                            onClick = { showMapPreview = !showMapPreview },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                if (showMapPreview) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                                contentDescription = "Alternar mapa",
+                                                tint = Color.White
+                                            )
+                                        }
                                     }
                                 }
 
@@ -347,21 +429,35 @@ fun RouteScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(210.dp)
-                                                .clip(RoundedCornerShape(12.dp))
+                                                .height(260.dp)
+                                                .clip(RoundedCornerShape(14.dp))
                                         ) {
-                                            MapRouteCanvas(
-                                                routePoints = selectedSessionPoints,
-                                                clients = dailyRouteList,
-                                                currentLocation = currentLocation,
-                                                isTrackingActive = isTrackingActive,
-                                                bearing = currentBearing,
-                                                accuracy = accuracyMeters,
-                                                onClientMarkerClick = { clientLoan ->
-                                                    selectedClientForPayment = clientLoan
-                                                },
-                                                modifier = Modifier.fillMaxSize()
-                                            )
+                                            if (useGoogleMaps) {
+                                                GoogleMapRouteView(
+                                                    routePoints = selectedSessionPoints,
+                                                    clients = dailyRouteList,
+                                                    currentLocation = currentLocation,
+                                                    isTrackingActive = isTrackingActive,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    onSwitchToRadar = { useGoogleMaps = false },
+                                                    onCollectPaymentClick = { clientLoan ->
+                                                        selectedClientForPayment = clientLoan
+                                                    }
+                                                )
+                                            } else {
+                                                MapRouteCanvas(
+                                                    routePoints = selectedSessionPoints,
+                                                    clients = dailyRouteList,
+                                                    currentLocation = currentLocation,
+                                                    isTrackingActive = isTrackingActive,
+                                                    bearing = currentBearing,
+                                                    accuracy = accuracyMeters,
+                                                    onClientMarkerClick = { clientLoan ->
+                                                        selectedClientForPayment = clientLoan
+                                                    },
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -436,8 +532,18 @@ fun RouteScreen(
             items(filteredList, key = { it.client.id }) { item ->
                 ClientCollectionCard(
                     item = item,
+                    currentLocation = currentLocation,
                     currencyFormat = currencyFormat,
                     onCollectClick = { selectedClientForPayment = item },
+                    onNavigateClick = {
+                        NavigationUtils.openGoogleMapsNavigation(
+                            context = context,
+                            destinationLat = item.client.latitude,
+                            destinationLng = item.client.longitude,
+                            destinationAddress = item.client.address,
+                            destinationName = item.client.name
+                        )
+                    },
                     onCallClick = {
                         if (item.client.phone.isNotEmpty()) {
                             val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${item.client.phone}"))
@@ -450,30 +556,65 @@ fun RouteScreen(
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$cleanNumber"))
                             context.startActivity(intent)
                         }
+                    },
+                    onPhotoClick = { selectedClientForPhoto = item },
+                    onReminderClick = { selectedClientForReminders = item }
+                )
+            }
+        }
+
+        // DiDi / Rappi Style Heads-Up Navigation Card for current stop
+        if (currentHudStop != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 0.dp)
+            ) {
+                DidiCollectorHudCard(
+                    currentClientItem = currentHudStop,
+                    currentIndex = if (pendingStops.isNotEmpty()) currentStopIndex + 1 else 1,
+                    totalClients = if (pendingStops.isNotEmpty()) pendingStops.size else dailyRouteList.size,
+                    collectorLat = currentLocation?.latitude,
+                    collectorLng = currentLocation?.longitude,
+                    onNextStop = {
+                        if (pendingStops.isNotEmpty()) {
+                            currentStopIndex = (currentStopIndex + 1) % pendingStops.size
+                        }
+                    },
+                    onCollectClick = { clientItem ->
+                        selectedClientForPayment = clientItem
+                    },
+                    onPhotoClick = { clientItem ->
+                        selectedClientForPhoto = clientItem
+                    },
+                    onReminderClick = { clientItem ->
+                        selectedClientForReminders = clientItem
                     }
                 )
             }
         }
 
         // Floating Action Buttons for quick creation
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(bottom = 16.dp, end = 16.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            FloatingActionButton(
-                onClick = { showAddClientDialog = true },
-                containerColor = EmeraldGreen,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.testTag("fab_add_client")
+        if (currentHudStop == null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 16.dp, end = 16.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(modifier = Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Add, contentDescription = "Nuevo Cliente")
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Nuevo Cliente", fontWeight = FontWeight.Bold)
+                FloatingActionButton(
+                    onClick = { showAddClientDialog = true },
+                    containerColor = EmeraldGreen,
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.testTag("fab_add_client")
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Add, contentDescription = "Nuevo Cliente")
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Nuevo Cliente", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -486,12 +627,95 @@ fun RouteScreen(
             onDismiss = { selectedClientForPayment = null },
             onConfirmPayment = { amount, notes, method ->
                 item.activeLoan?.let { loan ->
-                    viewModel.registerPayment(item.client, loan, amount, notes, method)
-                    val receiptText = viewModel.generatePaymentReceiptText(item.client, loan, amount)
-                    showReceiptText = receiptText
+                    pendingConfirmation = PendingPaymentConfirmation(
+                        client = item.client,
+                        loan = loan,
+                        amount = amount,
+                        method = method,
+                        notes = notes
+                    )
                 }
+                selectedClientForPayment = null
             },
             onShowReceipt = { receiptText -> showReceiptText = receiptText }
+        )
+    }
+
+    // Step 2: Collector Confirmation Prompt Dialog
+    pendingConfirmation?.let { pending ->
+        ConfirmPaymentPromptDialog(
+            client = pending.client,
+            loan = pending.loan,
+            amount = pending.amount,
+            paymentMethod = pending.method,
+            notes = pending.notes,
+            onDismiss = { pendingConfirmation = null },
+            onConfirmed = {
+                viewModel.registerPayment(
+                    client = pending.client,
+                    loan = pending.loan,
+                    amount = pending.amount,
+                    notes = pending.notes,
+                    paymentMethod = pending.method
+                )
+                val receiptText = viewModel.generatePaymentReceiptText(pending.client, pending.loan, pending.amount)
+                val newBal = (pending.loan.remainingBalance - pending.amount).coerceAtLeast(0.0)
+                val nextQ = pending.loan.paidQuotas + 1
+
+                paymentSuccessInfo = PaymentSuccessDisplay(
+                    clientName = pending.client.name,
+                    amount = pending.amount,
+                    quotaNumber = nextQ,
+                    remainingBalance = newBal,
+                    receiptText = receiptText
+                )
+                pendingConfirmation = null
+            }
+        )
+    }
+
+    // Step 3: Success Confirmation Modal with WhatsApp & Receipt
+    paymentSuccessInfo?.let { success ->
+        PaymentSuccessModal(
+            clientName = success.clientName,
+            amount = success.amount,
+            quotaNumber = success.quotaNumber,
+            remainingBalance = success.remainingBalance,
+            receiptText = success.receiptText,
+            onDismiss = { paymentSuccessInfo = null }
+        )
+    }
+
+    // Photo Capture Dialog
+    selectedClientForPhoto?.let { item ->
+        PhotoCaptureDialog(
+            title = "Foto Fachada / Evidencia",
+            clientName = item.client.name,
+            initialPhotoUri = item.client.photoUri,
+            onPhotoSaved = { path ->
+                viewModel.updateClientPhoto(item.client.id, path)
+            },
+            onDismiss = { selectedClientForPhoto = null }
+        )
+    }
+
+    // Reminders Dialog
+    selectedClientForReminders?.let { item ->
+        val clientReminders = allReminders.filter { it.clientId == item.client.id }
+        RemindersDialog(
+            clientId = item.client.id,
+            clientName = item.client.name,
+            reminders = clientReminders,
+            onAddReminder = { cId, cName, title, dueTime, notes, prio ->
+                viewModel.createReminder(cId, cName, title, dueTime, notes, prio)
+            },
+            onToggleCompleted = { rId, completed ->
+                viewModel.setReminderCompleted(rId, completed)
+            },
+            onDeleteReminder = { reminder ->
+                viewModel.deleteReminder(reminder)
+            },
+            onDismiss = { selectedClientForReminders = null }
         )
     }
 
@@ -526,13 +750,20 @@ fun RouteScreen(
 @Composable
 fun ClientCollectionCard(
     item: ClientWithActiveLoan,
+    currentLocation: android.location.Location?,
     currencyFormat: NumberFormat,
     onCollectClick: () -> Unit,
+    onNavigateClick: () -> Unit,
     onCallClick: () -> Unit,
-    onWhatsAppClick: () -> Unit
+    onWhatsAppClick: () -> Unit,
+    onPhotoClick: () -> Unit = {},
+    onReminderClick: () -> Unit = {}
 ) {
     val isCollected = item.isCollectedToday
     val loan = item.activeLoan
+    val distanceText = remember(currentLocation, item.client.latitude, item.client.longitude) {
+        NavigationUtils.formatDistance(currentLocation, item.client.latitude, item.client.longitude)
+    }
 
     ElevatedCard(
         shape = RoundedCornerShape(16.dp),
@@ -552,26 +783,67 @@ fun ClientCollectionCard(
                 verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = item.client.name,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = SlateNavy
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isCollected) EmeraldLight.copy(alpha = 0.2f) else GeometricAccent.copy(alpha = 0.15f),
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "#${item.client.visitOrder}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isCollected) EmeraldDark else GeometricAccent
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = item.client.name,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = SlateNavy
+                        )
+                    }
+
                     if (item.client.aliasOrBusiness.isNotEmpty()) {
                         Text(
                             text = "🏬 ${item.client.aliasOrBusiness}",
                             fontSize = 13.sp,
                             color = EmeraldDark,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                     }
                     if (item.client.address.isNotEmpty()) {
-                        Text(
-                            text = "📍 ${item.client.address}",
-                            fontSize = 12.sp,
-                            color = Slate600
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .padding(top = 4.dp)
+                                .clickable { onNavigateClick() }
+                        ) {
+                            Text(
+                                text = "📍 ${item.client.address}",
+                                fontSize = 12.sp,
+                                color = Slate600
+                            )
+                            if (distanceText != null) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Slate100
+                                ) {
+                                    Text(
+                                        text = distanceText,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GeometricAccent,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -647,6 +919,21 @@ fun ClientCollectionCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // GPS Directions / Turn-by-Turn Navigation
+                IconButton(
+                    onClick = onNavigateClick,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Slate100, CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.Navigation,
+                        contentDescription = "Cómo llegar con Google Maps",
+                        tint = GeometricAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
                 if (item.client.phone.isNotEmpty()) {
                     IconButton(
                         onClick = onCallClick,
@@ -656,6 +943,20 @@ fun ClientCollectionCard(
                     ) {
                         Icon(Icons.Default.Call, contentDescription = "Llamar", tint = Slate700, modifier = Modifier.size(18.dp))
                     }
+                }
+
+                IconButton(
+                    onClick = onPhotoClick,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Slate100, CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.Add, // Or camera icon
+                        contentDescription = "Foto de evidencia",
+                        tint = Slate700,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
 
                 if (loan != null) {
@@ -679,7 +980,7 @@ fun ClientCollectionCard(
                         ) {
                             Icon(Icons.Default.MonetizationOn, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Cobrar Q${loan.quotaAmount.toInt()}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Cobrar ${com.example.util.CurrencyUtils.format(loan.quotaAmount)}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }

@@ -5,16 +5,20 @@ import android.content.Context
 import android.location.Location
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.auth.AuthManager
+import com.example.auth.CollectorUser
 import com.example.data.db.AppDatabase
 import com.example.data.model.ClientEntity
 import com.example.data.model.ClientWithActiveLoan
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.LoanEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.model.ReminderEntity
 import com.example.data.model.RoutePointEntity
 import com.example.data.model.TrackingSessionEntity
 import com.example.data.repository.CobranzaRepository
 import com.example.service.LocationTrackingService
+import com.example.util.NetworkMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +48,12 @@ data class DailySummaryState(
 class CobranzaViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: CobranzaRepository
+    val networkMonitor: NetworkMonitor = NetworkMonitor.getInstance(application)
+    val isOnline: StateFlow<Boolean> = networkMonitor.isOnline
+
+    private val _pendingOfflineSyncCount = MutableStateFlow(0)
+    val pendingOfflineSyncCount: StateFlow<Int> = _pendingOfflineSyncCount.asStateFlow()
+
     val isTrackingActive: StateFlow<Boolean> = LocationTrackingService.isTracking
     val currentLocation: StateFlow<Location?> = LocationTrackingService.currentLocation
     val pointsCount: StateFlow<Int> = LocationTrackingService.pointsRecordedCount
@@ -53,10 +63,23 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
     val currentBearing: StateFlow<Float> = LocationTrackingService.currentBearing
     val accuracyMeters: StateFlow<Float> = LocationTrackingService.accuracyMeters
     val elapsedSeconds: StateFlow<Long> = LocationTrackingService.elapsedSeconds
+    val cloudSyncStatus: StateFlow<String> = LocationTrackingService.cloudSyncStatus
+    val cloudSyncSuccessCount: StateFlow<Int> = LocationTrackingService.cloudSyncSuccessCount
+    val lastCloudSyncTimestamp: StateFlow<Long?> = LocationTrackingService.lastCloudSyncTimestamp
 
     init {
         val database = AppDatabase.getDatabase(application)
         repository = CobranzaRepository(database)
+
+        // Automatic trigger: when connection is re-established, sync all pending offline payments
+        networkMonitor.setOnNetworkRestoredListener {
+            viewModelScope.launch {
+                val synced = repository.syncPendingOfflinePayments()
+                refreshPendingSyncCount()
+            }
+        }
+
+        refreshPendingSyncCount()
 
         // Ensure Barranquilla coordinates and select initial Barranquilla route session
         viewModelScope.launch {
@@ -95,6 +118,22 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun refreshPendingSyncCount() {
+        viewModelScope.launch {
+            val count = repository.getUnsyncedPaymentsCount()
+            _pendingOfflineSyncCount.value = count
+            networkMonitor.updatePendingSyncCount(count)
+        }
+    }
+
+    fun syncPendingOfflineData(onResult: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.syncPendingOfflinePayments()
+            refreshPendingSyncCount()
+            onResult(count)
+        }
+    }
+
     val dailyRouteList: StateFlow<List<ClientWithActiveLoan>> =
         repository.getDailyRouteClientsWithLoans()
             .stateIn(
@@ -111,6 +150,14 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
                 initialValue = emptyList()
             )
 
+    val allPaymentsHistory: StateFlow<List<PaymentEntity>> =
+        repository.getAllPayments()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
     val todayPayments: StateFlow<List<PaymentEntity>> =
         repository.getTodayPayments()
             .stateIn(
@@ -121,6 +168,22 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
 
     val todayExpenses: StateFlow<List<ExpenseEntity>> =
         repository.getTodayExpenses()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    val allReminders: StateFlow<List<ReminderEntity>> =
+        repository.getAllReminders()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    val pendingReminders: StateFlow<List<ReminderEntity>> =
+        repository.getPendingReminders()
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5000),
@@ -207,7 +270,9 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
         loan: LoanEntity,
         amount: Double,
         notes: String = "",
-        paymentMethod: String = "EFECTIVO"
+        paymentMethod: String = "EFECTIVO",
+        photoUri: String? = null,
+        onSuccess: ((Long) -> Unit)? = null
     ) {
         viewModelScope.launch {
             val loc = currentLocation.value
@@ -215,18 +280,61 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
             val lng = loc?.longitude ?: client.longitude
             val nextQuotaNumber = loan.paidQuotas + 1
 
-            repository.recordPayment(
+            val paymentId = repository.recordPayment(
                 loanId = loan.id,
                 clientId = client.id,
                 amount = amount,
                 quotaNumber = nextQuotaNumber,
                 notes = notes,
                 paymentMethod = paymentMethod,
+                photoUri = photoUri,
                 latitude = lat,
                 longitude = lng
             )
+            refreshPendingSyncCount()
+            onSuccess?.invoke(paymentId)
         }
     }
+
+    fun updateClientPhoto(clientId: Long, photoUri: String) {
+        viewModelScope.launch {
+            repository.updateClientPhoto(clientId, photoUri)
+        }
+    }
+
+    fun createReminder(
+        clientId: Long,
+        clientName: String,
+        title: String,
+        dueTimeFormatted: String,
+        notes: String = "",
+        priority: String = "NORMAL"
+    ) {
+        viewModelScope.launch {
+            repository.createReminder(
+                clientId = clientId,
+                clientName = clientName,
+                title = title,
+                dueTimeFormatted = dueTimeFormatted,
+                notes = notes,
+                priority = priority
+            )
+        }
+    }
+
+    fun setReminderCompleted(reminderId: Long, completed: Boolean) {
+        viewModelScope.launch {
+            repository.setReminderCompleted(reminderId, completed)
+        }
+    }
+
+    fun deleteReminder(reminder: ReminderEntity) {
+        viewModelScope.launch {
+            repository.deleteReminder(reminder)
+        }
+    }
+
+    fun getPaymentsForClient(clientId: Long) = repository.getPaymentsForClient(clientId)
 
     fun createClient(
         name: String,
@@ -363,5 +471,67 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
             --------------------------------
             💵 EFECTIVO NETO EN MANO: ${com.example.util.CurrencyUtils.format(summary.netCashInHand)}
         """.trimIndent()
+    }
+
+    private val _isSyncingRoute = MutableStateFlow(false)
+    val isSyncingRoute: StateFlow<Boolean> = _isSyncingRoute.asStateFlow()
+
+    private val _currentUser = MutableStateFlow<CollectorUser?>(AuthManager.getSavedUser(application))
+    val currentUser: StateFlow<CollectorUser?> = _currentUser.asStateFlow()
+
+    fun signInWithGoogle(
+        context: Context,
+        onResult: (Boolean, CollectorUser?, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = AuthManager.signInWithGoogle(context)
+            result.onSuccess { user ->
+                _currentUser.value = user
+                onResult(true, user, null)
+            }.onFailure { error ->
+                onResult(false, null, error.message)
+            }
+        }
+    }
+
+    fun loginWithEmailPassword(
+        context: Context,
+        email: String,
+        pass: String,
+        onResult: (Boolean, CollectorUser?, String?) -> Unit
+    ) {
+        val result = AuthManager.loginWithEmailPassword(context, email, pass)
+        result.onSuccess { user ->
+            _currentUser.value = user
+            onResult(true, user, null)
+        }.onFailure { error ->
+            onResult(false, null, error.message)
+        }
+    }
+
+    fun loginQuick(user: CollectorUser) {
+        AuthManager.saveUser(getApplication(), user)
+        _currentUser.value = user
+    }
+
+    fun logout() {
+        AuthManager.clearUser(getApplication())
+        _currentUser.value = null
+    }
+
+    fun syncRouteFromSupabase(
+        routeCode: String = "RUTA_BARRANQUILLA_01",
+        onComplete: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            _isSyncingRoute.value = true
+            val result = repository.syncRouteFromSupabase(routeCode)
+            _isSyncingRoute.value = false
+            result.onSuccess { count ->
+                onComplete(true, "Ruta sincronizada con éxito ($count facturas activas descargadas a Room).")
+            }.onFailure { error ->
+                onComplete(false, "Modo sin conexión: ${error.localizedMessage ?: "No se pudo sincronizar con Supabase"}")
+            }
+        }
     }
 }

@@ -27,9 +27,11 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -39,6 +41,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -50,27 +53,47 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.data.model.ClientEntity
 import com.example.ui.components.AddClientDialog
 import com.example.ui.components.AddLoanDialog
+import com.example.ui.components.ClientPaymentHistoryDialog
+import com.example.ui.components.PhotoCaptureDialog
+import com.example.ui.components.ReceiptDialog
+import com.example.ui.components.RemindersDialog
+import com.example.ui.theme.BlueCyan
+import com.example.ui.theme.BlueInfo
+import com.example.ui.theme.DarkBackground
+import com.example.ui.theme.DarkSurfaceElevated
+import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.EmeraldContainer
 import com.example.ui.theme.EmeraldDark
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.EmeraldLight
+import com.example.ui.theme.EmeraldMint
+import com.example.ui.theme.GeometricBorderDark
 import com.example.ui.theme.OnEmeraldContainer
 import com.example.ui.theme.RoseDanger
 import com.example.ui.theme.Slate100
+import com.example.ui.theme.Slate400
+import com.example.ui.theme.Slate500
 import com.example.ui.theme.Slate600
 import com.example.ui.theme.Slate700
+import com.example.ui.theme.Slate800
+import com.example.ui.theme.Slate900
 import com.example.ui.theme.SlateNavy
 import com.example.ui.viewmodel.CobranzaViewModel
+import com.example.util.CurrencyUtils
+import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -82,12 +105,18 @@ fun ClientsScreen(
     val context = LocalContext.current
     val allClients by viewModel.allClients.collectAsStateWithLifecycle()
     val dailyRouteList by viewModel.dailyRouteList.collectAsStateWithLifecycle()
+    val allPaymentsHistory by viewModel.allPaymentsHistory.collectAsStateWithLifecycle()
+    val allReminders by viewModel.allReminders.collectAsStateWithLifecycle()
     val currentLocation by viewModel.currentLocation.collectAsStateWithLifecycle()
 
     var searchQuery by remember { mutableStateOf("") }
     var showAddClientDialog by remember { mutableStateOf(false) }
     var showAddLoanDialog by remember { mutableStateOf(false) }
     var preselectedClientId by remember { mutableStateOf<Long?>(null) }
+    var selectedClientForHistory by remember { mutableStateOf<ClientEntity?>(null) }
+    var selectedClientForPhoto by remember { mutableStateOf<ClientEntity?>(null) }
+    var selectedClientForReminders by remember { mutableStateOf<ClientEntity?>(null) }
+    var viewingReceiptText by remember { mutableStateOf<String?>(null) }
 
     val filteredClients = remember(allClients, searchQuery) {
         if (searchQuery.isBlank()) allClients
@@ -98,9 +127,7 @@ fun ClientsScreen(
         }
     }
 
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
-
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize().background(DarkBackground)) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 96.dp)
@@ -108,7 +135,7 @@ fun ClientsScreen(
             // Header
             item {
                 Surface(
-                    color = SlateNavy,
+                    color = Slate900,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
@@ -119,9 +146,9 @@ fun ClientsScreen(
                             color = Color.White
                         )
                         Text(
-                            text = "${allClients.size} clientes registrados",
+                            text = "${allClients.size} clientes en sistema",
                             fontSize = 13.sp,
-                            color = Color(0xFF94A3B8)
+                            color = Slate400
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
@@ -130,19 +157,19 @@ fun ClientsScreen(
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("Buscar por nombre, negocio o zona...") },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White) },
+                            placeholder = { Text("Buscar por nombre, negocio o dirección...") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Slate400) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("search_client_input"),
                             shape = RoundedCornerShape(14.dp),
                             colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color(0xFF1E293B),
-                                unfocusedContainerColor = Color(0xFF1E293B),
+                                focusedContainerColor = Slate800,
+                                unfocusedContainerColor = Slate800,
                                 focusedTextColor = Color.White,
                                 unfocusedTextColor = Color.White,
-                                focusedBorderColor = EmeraldLight,
-                                unfocusedBorderColor = Color(0xFF334155)
+                                focusedBorderColor = EmeraldMint,
+                                unfocusedBorderColor = GeometricBorderDark
                             )
                         )
                     }
@@ -173,7 +200,7 @@ fun ClientsScreen(
                             preselectedClientId = null
                             showAddLoanDialog = true
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -188,10 +215,12 @@ fun ClientsScreen(
             items(filteredClients, key = { it.id }) { client ->
                 val clientLoanInfo = dailyRouteList.find { it.client.id == client.id }
                 val activeLoan = clientLoanInfo?.activeLoan
+                val clientPayments = allPaymentsHistory.filter { it.clientId == client.id }
 
-                ElevatedCard(
+                Surface(
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+                    color = Slate900,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GeometricBorderDark),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp)
@@ -207,36 +236,58 @@ fun ClientsScreen(
                                     text = client.name,
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = SlateNavy
+                                    color = Color.White
                                 )
                                 if (client.aliasOrBusiness.isNotEmpty()) {
                                     Text(
                                         text = "🏬 ${client.aliasOrBusiness}",
                                         fontSize = 13.sp,
-                                        color = EmeraldDark,
-                                        fontWeight = FontWeight.Medium
+                                        color = EmeraldMint,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(top = 2.dp)
                                     )
                                 }
                                 if (client.phone.isNotEmpty()) {
                                     Text(
                                         text = "📞 ${client.phone}",
                                         fontSize = 12.sp,
-                                        color = Slate600
+                                        color = Slate400
                                     )
                                 }
                                 if (client.address.isNotEmpty()) {
                                     Text(
                                         text = "📍 ${client.address}",
                                         fontSize = 12.sp,
-                                        color = Slate600
+                                        color = Slate400
                                     )
                                 }
                             }
 
-                            IconButton(
-                                onClick = { viewModel.deleteClient(client) }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = RoseDanger.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Historial de Pagos Button
+                                IconButton(
+                                    onClick = { selectedClientForHistory = client },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.History,
+                                        contentDescription = "Historial de Pagos",
+                                        tint = BlueCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { viewModel.deleteClient(client) },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Eliminar",
+                                        tint = RoseDanger.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -244,45 +295,77 @@ fun ClientsScreen(
 
                         // Active Loan Summary
                         if (activeLoan != null) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(EmeraldContainer, RoundedCornerShape(10.dp))
-                                    .padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF111827),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1F2937)),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column {
-                                    Text("Crédito Activo", fontSize = 11.sp, color = OnEmeraldContainer)
-                                    Text("${com.example.util.CurrencyUtils.format(activeLoan.amountBorrowed)} (+${activeLoan.interestRate.toInt()}%)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = EmeraldDark)
-                                }
-                                Column {
-                                    Text("Saldo Restante", fontSize = 11.sp, color = OnEmeraldContainer)
-                                    Text(com.example.util.CurrencyUtils.format(activeLoan.remainingBalance), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = EmeraldDark)
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("Cuota Diaria", fontSize = 11.sp, color = OnEmeraldContainer)
-                                    Text(com.example.util.CurrencyUtils.format(activeLoan.quotaAmount), fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldDark)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("Crédito Activo", fontSize = 11.sp, color = Slate400)
+                                        Text("${CurrencyUtils.format(activeLoan.amountBorrowed)} (+${activeLoan.interestRate.toInt()}%)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                    Column {
+                                        Text("Saldo Restante", fontSize = 11.sp, color = Slate400)
+                                        Text(CurrencyUtils.format(activeLoan.remainingBalance), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = EmeraldMint)
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text("Cuota Diaria", fontSize = 11.sp, color = Slate400)
+                                        Text(CurrencyUtils.format(activeLoan.quotaAmount), fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldMint)
+                                    }
                                 }
                             }
                         } else {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF111827),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1F2937)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Sin crédito activo", fontSize = 12.sp, color = Slate400)
+                                    androidx.compose.material3.TextButton(
+                                        onClick = {
+                                            preselectedClientId = client.id
+                                            showAddLoanDialog = true
+                                        }
+                                    ) {
+                                        Text("+ Crear Crédito", fontSize = 12.sp, color = EmeraldMint, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Recent payments badge
+                        if (clientPayments.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Slate100, RoundedCornerShape(10.dp))
-                                    .padding(10.dp),
+                                    .clickable { selectedClientForHistory = client },
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Sin crédito activo", fontSize = 12.sp, color = Slate600)
-                                TextButton(
-                                    onClick = {
-                                        preselectedClientId = client.id
-                                        showAddLoanDialog = true
-                                    }
-                                ) {
-                                    Text("+ Dar Préstamo", fontSize = 12.sp, color = EmeraldGreen, fontWeight = FontWeight.Bold)
-                                }
+                                Text(
+                                    text = "📜 ${clientPayments.size} pagos registrados (Total: ${CurrencyUtils.format(clientPayments.sumOf { it.amount })})",
+                                    fontSize = 11.sp,
+                                    color = BlueCyan,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = BlueCyan, modifier = Modifier.size(14.dp))
                             }
                         }
                     }
@@ -311,9 +394,54 @@ fun ClientsScreen(
             }
         )
     }
+
+    selectedClientForHistory?.let { client ->
+        val payments = allPaymentsHistory.filter { it.clientId == client.id }
+        ClientPaymentHistoryDialog(
+            client = client,
+            payments = payments,
+            onDismiss = { selectedClientForHistory = null },
+            onViewReceipt = { receipt ->
+                viewingReceiptText = receipt
+            }
+        )
+    }
+
+    selectedClientForPhoto?.let { client ->
+        PhotoCaptureDialog(
+            title = "Foto de Fachada / Negocio",
+            clientName = client.name,
+            initialPhotoUri = client.photoUri,
+            onPhotoSaved = { path ->
+                viewModel.updateClientPhoto(client.id, path)
+            },
+            onDismiss = { selectedClientForPhoto = null }
+        )
+    }
+
+    selectedClientForReminders?.let { client ->
+        val clientReminders = allReminders.filter { it.clientId == client.id }
+        RemindersDialog(
+            clientId = client.id,
+            clientName = client.name,
+            reminders = clientReminders,
+            onAddReminder = { cId, cName, title, dueTime, notes, prio ->
+                viewModel.createReminder(cId, cName, title, dueTime, notes, prio)
+            },
+            onToggleCompleted = { rId, completed ->
+                viewModel.setReminderCompleted(rId, completed)
+            },
+            onDeleteReminder = { reminder ->
+                viewModel.deleteReminder(reminder)
+            },
+            onDismiss = { selectedClientForReminders = null }
+        )
+    }
+
+    viewingReceiptText?.let { receipt ->
+        ReceiptDialog(
+            receiptText = receipt,
+            onDismiss = { viewingReceiptText = null }
+        )
+    }
 }
-
-@Composable
-private fun TextButton(onClick: () -> Unit, content: @Composable () -> Unit) =
-    androidx.compose.material3.TextButton(onClick = onClick) { content() }
-

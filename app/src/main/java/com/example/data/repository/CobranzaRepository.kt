@@ -1,15 +1,24 @@
 package com.example.data.repository
 
+import android.util.Log
 import com.example.data.db.AppDatabase
 import com.example.data.model.ClientEntity
 import com.example.data.model.ClientWithActiveLoan
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.LoanEntity
 import com.example.data.model.PaymentEntity
+import com.example.data.model.ReminderEntity
 import com.example.data.model.RoutePointEntity
 import com.example.data.model.TrackingSessionEntity
+import com.example.service.SupabaseGpsClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -25,6 +34,7 @@ class CobranzaRepository(private val database: AppDatabase) {
     private val paymentDao = database.paymentDao()
     private val routeDao = database.routeDao()
     private val expenseDao = database.expenseDao()
+    private val reminderDao = database.reminderDao()
 
     fun getTodayStartAndEndTimestamps(): Pair<Long, Long> {
         val calendar = Calendar.getInstance()
@@ -48,24 +58,27 @@ class CobranzaRepository(private val database: AppDatabase) {
         return sdf.format(Date())
     }
 
-    // Combine clients, active loans, and today payments for reactive daily route list
+    // Combine clients, active loans, reminders, and today payments for reactive daily route list
     fun getDailyRouteClientsWithLoans(): Flow<List<ClientWithActiveLoan>> {
         val (startOfDay, endOfDay) = getTodayStartAndEndTimestamps()
         val clientsFlow = clientDao.getAllActiveClients()
         val loansFlow = loanDao.getAllActiveLoans()
         val todayPaymentsFlow = paymentDao.getPaymentsForDay(startOfDay, endOfDay)
+        val pendingRemindersFlow = reminderDao.getPendingReminders()
 
-        return combine(clientsFlow, loansFlow, todayPaymentsFlow) { clients, loans, payments ->
+        return combine(clientsFlow, loansFlow, todayPaymentsFlow, pendingRemindersFlow) { clients, loans, payments, reminders ->
             clients.map { client ->
                 val activeLoan = loans.find { it.clientId == client.id }
                 val todayPayment = if (activeLoan != null) {
                     payments.find { it.loanId == activeLoan.id }
                 } else null
+                val clientRemindersCount = reminders.count { it.clientId == client.id }
                 ClientWithActiveLoan(
                     client = client,
                     activeLoan = activeLoan,
                     todayPayment = todayPayment,
-                    isCollectedToday = todayPayment != null
+                    isCollectedToday = todayPayment != null,
+                    pendingRemindersCount = clientRemindersCount
                 )
             }
         }
@@ -78,6 +91,13 @@ class CobranzaRepository(private val database: AppDatabase) {
     suspend fun saveClient(client: ClientEntity): Long = clientDao.insertClient(client)
 
     suspend fun updateClient(client: ClientEntity) = clientDao.updateClient(client)
+
+    suspend fun updateClientPhoto(clientId: Long, photoUri: String) {
+        val client = clientDao.getClientById(clientId)
+        if (client != null) {
+            clientDao.updateClient(client.copy(photoUri = photoUri))
+        }
+    }
 
     suspend fun deleteClient(client: ClientEntity) = clientDao.deleteClient(client)
 
@@ -94,6 +114,7 @@ class CobranzaRepository(private val database: AppDatabase) {
         quotaNumber: Int,
         notes: String = "",
         paymentMethod: String = "EFECTIVO",
+        photoUri: String? = null,
         latitude: Double? = null,
         longitude: Double? = null
     ): Long {
@@ -106,12 +127,138 @@ class CobranzaRepository(private val database: AppDatabase) {
             notes = notes,
             collectedLatitude = latitude,
             collectedLongitude = longitude,
-            paymentMethod = paymentMethod
+            paymentMethod = paymentMethod,
+            photoUri = photoUri,
+            isSyncedWithCloud = false
         )
         val paymentId = paymentDao.insertPayment(payment)
         loanDao.recordPaymentOnLoan(loanId, amount)
+
+        // Asynchronously sync with Supabase (update invoices table & insert into cash_drawer)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val updatedLoan = loanDao.getLoanById(loanId)
+                val client = clientDao.getClientById(clientId)
+                val clientName = client?.name ?: "Cliente #$clientId"
+
+                val totalPaid = updatedLoan?.totalPaid ?: amount
+                val remainingBalance = updatedLoan?.remainingBalance ?: 0.0
+                val paidQuotas = updatedLoan?.paidQuotas ?: quotaNumber
+                val totalQuotas = updatedLoan?.totalQuotas ?: 24
+
+                val success = SupabaseGpsClient.recordPaymentToSupabase(
+                    loanId = loanId,
+                    clientId = clientId,
+                    clientName = clientName,
+                    amount = amount,
+                    quotaNumber = quotaNumber,
+                    totalPaid = totalPaid,
+                    remainingBalance = remainingBalance,
+                    paidQuotas = paidQuotas,
+                    totalQuotas = totalQuotas,
+                    paymentMethod = paymentMethod,
+                    notes = notes,
+                    latitude = latitude,
+                    longitude = longitude
+                )
+                if (success) {
+                    paymentDao.markPaymentSynced(paymentId)
+                }
+            } catch (e: Exception) {
+                Log.e("CobranzaRepository", "Error syncing payment to Supabase (stored offline): ${e.message}")
+            }
+        }
+
         return paymentId
     }
+
+    /**
+     * Sincroniza todos los pagos que se registraron mientras el dispositivo estaba offline.
+     */
+    suspend fun syncPendingOfflinePayments(): Int = withContext(Dispatchers.IO) {
+        val unsynced = paymentDao.getUnsyncedPayments()
+        var syncedCount = 0
+        for (payment in unsynced) {
+            try {
+                val loan = loanDao.getLoanById(payment.loanId)
+                val client = clientDao.getClientById(payment.clientId)
+                val clientName = client?.name ?: "Cliente #${payment.clientId}"
+
+                val totalPaid = loan?.totalPaid ?: payment.amount
+                val remainingBalance = loan?.remainingBalance ?: 0.0
+                val paidQuotas = loan?.paidQuotas ?: payment.quotaNumber
+                val totalQuotas = loan?.totalQuotas ?: 24
+
+                val success = SupabaseGpsClient.recordPaymentToSupabase(
+                    loanId = payment.loanId,
+                    clientId = payment.clientId,
+                    clientName = clientName,
+                    amount = payment.amount,
+                    quotaNumber = payment.quotaNumber,
+                    totalPaid = totalPaid,
+                    remainingBalance = remainingBalance,
+                    paidQuotas = paidQuotas,
+                    totalQuotas = totalQuotas,
+                    paymentMethod = paymentMethodToLabel(payment.paymentMethod),
+                    notes = payment.notes,
+                    latitude = payment.collectedLatitude,
+                    longitude = payment.collectedLongitude
+                )
+                if (success) {
+                    paymentDao.markPaymentSynced(payment.id)
+                    syncedCount++
+                }
+            } catch (e: Exception) {
+                Log.e("CobranzaRepository", "Failed sync offline payment ${payment.id}: ${e.message}")
+            }
+        }
+        syncedCount
+    }
+
+    private fun paymentMethodToLabel(method: String): String = method
+
+    suspend fun getUnsyncedPaymentsCount(): Int = withContext(Dispatchers.IO) {
+        paymentDao.getUnsyncedPayments().size
+    }
+
+    // Reminders
+    fun getAllReminders(): Flow<List<ReminderEntity>> = reminderDao.getAllReminders()
+
+    fun getPendingReminders(): Flow<List<ReminderEntity>> = reminderDao.getPendingReminders()
+
+    fun getRemindersForClient(clientId: Long): Flow<List<ReminderEntity>> = reminderDao.getRemindersForClient(clientId)
+
+    suspend fun createReminder(
+        clientId: Long,
+        clientName: String,
+        title: String,
+        dueTimeFormatted: String,
+        dueDateMillis: Long = System.currentTimeMillis(),
+        notes: String = "",
+        priority: String = "NORMAL"
+    ): Long {
+        val reminder = ReminderEntity(
+            clientId = clientId,
+            clientName = clientName,
+            title = title,
+            dueTimeFormatted = dueTimeFormatted,
+            dueDateMillis = dueDateMillis,
+            isCompleted = false,
+            notes = notes,
+            priority = priority
+        )
+        return reminderDao.insertReminder(reminder)
+    }
+
+    suspend fun setReminderCompleted(reminderId: Long, isCompleted: Boolean) {
+        reminderDao.setReminderCompleted(reminderId, isCompleted)
+    }
+
+    suspend fun deleteReminder(reminder: ReminderEntity) {
+        reminderDao.deleteReminder(reminder)
+    }
+
+    fun getAllPayments(): Flow<List<PaymentEntity>> = paymentDao.getAllPayments()
 
     fun getPaymentsForClient(clientId: Long): Flow<List<PaymentEntity>> = paymentDao.getPaymentsForClient(clientId)
 
@@ -235,5 +382,93 @@ class CobranzaRepository(private val database: AppDatabase) {
                 sin(dLon / 2) * sin(dLon / 2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return r * c
+    }
+
+    /**
+     * Consulta GET /rest/v1/invoices?route_code=eq.${routeCode}&status=eq.ACTIVA en Supabase
+     * y actualiza la base de datos local de Room para permitir funcionamiento offline en caso
+     * de pérdida de conectividad en la calle.
+     */
+    suspend fun syncRouteFromSupabase(routeCode: String): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val jsonString = SupabaseGpsClient.fetchActiveInvoicesForRoute(routeCode)
+                ?: return@withContext Result.failure(Exception("Sin respuesta del servidor Supabase o fallo de red."))
+
+            val jsonArray = JSONArray(jsonString)
+            var syncedCount = 0
+
+            for (i in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(i)
+
+                // 1. Extraer datos del cliente
+                val clientId = item.optLong("client_id", item.optLong("clientId", if (item.has("id")) item.optLong("id") else (i + 1).toLong()))
+                val clientName = item.optString("client_name", item.optString("customer_name", item.optString("name", "Cliente #$clientId")))
+                val alias = item.optString("alias_or_business", item.optString("business_name", item.optString("alias", "")))
+                val phone = item.optString("phone", item.optString("telephone", ""))
+                val address = item.optString("address", item.optString("address_line", ""))
+                
+                val lat = if (item.has("lat") && !item.isNull("lat")) item.optDouble("lat")
+                    else if (item.has("latitude") && !item.isNull("latitude")) item.optDouble("latitude")
+                    else if (item.has("collected_lat") && !item.isNull("collected_lat")) item.optDouble("collected_lat")
+                    else null
+
+                val lng = if (item.has("lng") && !item.isNull("lng")) item.optDouble("lng")
+                    else if (item.has("longitude") && !item.isNull("longitude")) item.optDouble("longitude")
+                    else if (item.has("collected_lng") && !item.isNull("collected_lng")) item.optDouble("collected_lng")
+                    else null
+
+                val notes = item.optString("notes", "")
+                val visitOrder = item.optInt("visit_order", item.optInt("order", i + 1))
+
+                val clientEntity = ClientEntity(
+                    id = clientId,
+                    name = clientName,
+                    aliasOrBusiness = alias,
+                    phone = phone,
+                    address = address,
+                    latitude = if (lat != null && !lat.isNaN()) lat else null,
+                    longitude = if (lng != null && !lng.isNaN()) lng else null,
+                    notes = notes,
+                    visitOrder = visitOrder,
+                    isActive = true
+                )
+                clientDao.insertClient(clientEntity)
+
+                // 2. Extraer datos del préstamo / factura
+                val loanId = item.optLong("loan_id", item.optLong("loanId", item.optLong("id", clientId)))
+                val amountBorrowed = item.optDouble("amount_borrowed", item.optDouble("amount", item.optDouble("principal", 1000000.0)))
+                val interestRate = item.optDouble("interest_rate", item.optDouble("interest", 20.0))
+                val totalToPay = item.optDouble("total_to_pay", item.optDouble("total_amount", amountBorrowed * (1.0 + (interestRate / 100.0))))
+                val totalPaid = item.optDouble("total_paid", item.optDouble("amount_paid", 0.0))
+                val remainingBalance = item.optDouble("remaining_balance", item.optDouble("balance", totalToPay - totalPaid))
+                val totalQuotas = item.optInt("total_quotas", 24)
+                val quotaAmount = item.optDouble("quota_amount", item.optDouble("daily_quota", totalToPay / totalQuotas))
+                val paidQuotas = item.optInt("paid_quotas", (totalPaid / (if (quotaAmount > 0) quotaAmount else 1.0)).toInt())
+                val frequency = item.optString("frequency", "DIARIO")
+
+                val loanEntity = LoanEntity(
+                    id = loanId,
+                    clientId = clientId,
+                    amountBorrowed = amountBorrowed,
+                    interestRate = interestRate,
+                    totalToPay = totalToPay,
+                    totalPaid = totalPaid,
+                    remainingBalance = remainingBalance.coerceAtLeast(0.0),
+                    quotaAmount = quotaAmount,
+                    totalQuotas = totalQuotas,
+                    paidQuotas = paidQuotas,
+                    frequency = frequency,
+                    status = "ACTIVE"
+                )
+                loanDao.insertLoan(loanEntity)
+                syncedCount++
+            }
+
+            Log.d("CobranzaRepository", "Sincronizados $syncedCount clientes/facturas desde Supabase a Room para ruta $routeCode.")
+            Result.success(syncedCount)
+        } catch (e: Exception) {
+            Log.e("CobranzaRepository", "Error sincronizando ruta desde Supabase: ${e.message}", e)
+            Result.failure(e)
+        }
     }
 }

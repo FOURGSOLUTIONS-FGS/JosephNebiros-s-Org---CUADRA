@@ -18,6 +18,7 @@ data class ClientEntity(
     val notes: String = "",
     val visitOrder: Int = 0,
     val isActive: Boolean = true,
+    val photoUri: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -85,7 +86,38 @@ data class PaymentEntity(
     val notes: String = "",
     val collectedLatitude: Double? = null,
     val collectedLongitude: Double? = null,
-    val paymentMethod: String = "EFECTIVO" // EFECTIVO, TRANSFERENCIA
+    val paymentMethod: String = "EFECTIVO", // EFECTIVO, TRANSFERENCIA
+    val photoUri: String? = null,
+    val isSyncedWithCloud: Boolean = false
+)
+
+@Entity(
+    tableName = "client_reminders",
+    foreignKeys = [
+        ForeignKey(
+            entity = ClientEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["clientId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["clientId"]),
+        Index(value = ["dueDateMillis"])
+    ]
+)
+data class ReminderEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val clientId: Long,
+    val clientName: String,
+    val title: String,
+    val dueTimeFormatted: String = "",
+    val dueDateMillis: Long = System.currentTimeMillis(),
+    val isCompleted: Boolean = false,
+    val notes: String = "",
+    val priority: String = "NORMAL", // ALTA, NORMAL, URGENTE
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 @Entity(
@@ -134,5 +166,6 @@ data class ClientWithActiveLoan(
     val client: ClientEntity,
     val activeLoan: LoanEntity?,
     val todayPayment: PaymentEntity? = null,
-    val isCollectedToday: Boolean = false
+    val isCollectedToday: Boolean = false,
+    val pendingRemindersCount: Int = 0
 )
