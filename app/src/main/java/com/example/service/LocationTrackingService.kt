@@ -221,6 +221,8 @@ class LocationTrackingService : Service() {
         _currentSpeedKmh.value = 0f
         _elapsedSeconds.value = 0L
         lastRecordedLocation = null
+        lastCloudSyncLocation = null
+        lastCloudSyncTimeMs = 0L
 
         val notification = buildNotification("Ruta iniciada ($sessionId) • Registrando recorrido")
 
@@ -321,12 +323,26 @@ class LocationTrackingService : Service() {
         }
 
         // 2. Transmit coordinates in real-time to Supabase (gps_tracking table)
-        // using SupabaseClient (Retrofit/OkHttp) for live dashboard tracking
-        val routeCode = currentSessionId.ifEmpty { "RUTA_BARRANQUILLA_01" }
-        val speedIntKmh = speedKmh.toInt()
-        val speedFormatted = "$speedIntKmh km/h"
+        // Adaptive Throttling: send immediately if moved >= 2.5m OR after 8s heartbeat when stationary
+        val now = System.currentTimeMillis()
+        val prevSyncLoc = lastCloudSyncLocation
+        val distSinceLastSync = if (prevSyncLoc != null) {
+            calculateDistanceMeters(prevSyncLoc.latitude, prevSyncLoc.longitude, location.latitude, location.longitude)
+        } else {
+            Double.MAX_VALUE
+        }
 
-        serviceScope.launch {
+        val shouldSyncCloud = prevSyncLoc == null || distSinceLastSync >= 2.5 || (now - lastCloudSyncTimeMs) >= 8000L
+
+        if (shouldSyncCloud) {
+            lastCloudSyncLocation = location
+            lastCloudSyncTimeMs = now
+
+            val routeCode = currentSessionId.ifEmpty { "RUTA_BARRANQUILLA_01" }
+            val speedIntKmh = speedKmh.toInt()
+            val speedFormatted = "$speedIntKmh km/h"
+
+            serviceScope.launch {
             try {
                 val gpsDto = SupabaseGpsDto(
                     routeCode = routeCode,
@@ -361,6 +377,7 @@ class LocationTrackingService : Service() {
             }
         }
     }
+}
 
     private fun calculateDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val r = 6371000.0 // Earth radius in meters
