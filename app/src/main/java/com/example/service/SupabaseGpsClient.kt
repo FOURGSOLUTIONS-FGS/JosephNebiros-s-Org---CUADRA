@@ -20,6 +20,7 @@ object SupabaseGpsClient {
     const val SUPABASE_GPS_URL = "$SUPABASE_BASE_URL/gps_tracking"
     const val SUPABASE_INVOICES_URL = "$SUPABASE_BASE_URL/invoices"
     const val SUPABASE_CASH_DRAWER_URL = "$SUPABASE_BASE_URL/cash_drawer"
+    const val SUPABASE_PAYMENTS_URL = "$SUPABASE_BASE_URL/payments"
 
     // Default Supabase Anon Key
     var apiKey: String = "sb_publishable_6qD62iUDo8v6lXJzA2SGng_6ows5wxG"
@@ -89,6 +90,10 @@ object SupabaseGpsClient {
      * Updates the invoice/loan status in Supabase (invoices table)
      * and adds the collected amount to the cash drawer (cash_drawer table)
      */
+        /**
+     * Atomically records a payment in Supabase (payments table).
+     * PostgreSQL trigger handles deducting invoice balance and updating cash drawer atomically.
+     */
     suspend fun recordPaymentToSupabase(
         loanId: Long,
         clientId: Long,
@@ -102,90 +107,47 @@ object SupabaseGpsClient {
         paymentMethod: String,
         notes: String,
         latitude: Double?,
-        longitude: Double?
+        longitude: Double?,
+        routeCode: String = "001"
     ): Boolean = withContext(Dispatchers.IO) {
-        var invoiceSuccess = false
-        var cashDrawerSuccess = false
         val nowIso = getIsoTimestamp()
+        val invoiceIdStr = "F-$loanId"
 
-        // 1. Update/Merge in invoices table
         try {
-            val invoicePayload = JSONObject().apply {
-                put("id", loanId)
-                put("loan_id", loanId)
-                put("client_id", clientId)
+            val paymentPayload = JSONObject().apply {
+                put("invoice_id", invoiceIdStr)
+                put("client_id", clientId.toString())
                 put("client_name", clientName)
-                put("amount_paid", amount)
-                put("total_paid", totalPaid)
-                put("remaining_balance", remainingBalance)
-                put("quota_number", quotaNumber)
-                put("paid_quotas", paidQuotas)
-                put("total_quotas", totalQuotas)
-                put("status", if (remainingBalance <= 0.01) "PAGADO" else "ACTIVO")
-                put("payment_method", paymentMethod)
-                put("notes", notes)
-                if (latitude != null) put("collected_lat", latitude)
-                if (longitude != null) put("collected_lng", longitude)
-                put("last_payment_date", nowIso)
-                put("last_sync", "En vivo")
-            }.toString()
-
-            val invoiceRequest = Request.Builder()
-                .url(SUPABASE_INVOICES_URL)
-                .post(invoicePayload.toRequestBody(JSON_MEDIA_TYPE))
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
-                .addHeader("Prefer", "resolution=merge-duplicates")
-                .addHeader("Content-Type", "application/json")
-                .build()
-
-            okHttpClient.newCall(invoiceRequest).execute().use { response ->
-                invoiceSuccess = response.isSuccessful || response.code in 200..299
-                Log.d(TAG, "Supabase invoices table update HTTP ${response.code} (Success: $invoiceSuccess)")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating Supabase invoices table: ${e.message}")
-        }
-
-        // 2. Insert recaudo in cash_drawer table
-        try {
-            val cashPayload = JSONObject().apply {
-                put("loan_id", loanId)
-                put("client_id", clientId)
-                put("client_name", clientName)
+                put("route_code", routeCode)
                 put("amount", amount)
-                put("type", "RECAUDO")
-                put("concept", "Cobro Cuota #$quotaNumber ($clientName)")
-                put("payment_method", paymentMethod)
+                put("payment_method", paymentMethod.uppercase())
+                put("quota_number", quotaNumber)
                 if (latitude != null) put("collected_lat", latitude)
                 if (longitude != null) put("collected_lng", longitude)
+                put("collected_by", "COBRADOR")
+                put("notes", notes)
                 put("created_at", nowIso)
-                put("status", "COMPLETADO")
             }.toString()
 
-            val cashRequest = Request.Builder()
-                .url(SUPABASE_CASH_DRAWER_URL)
-                .post(cashPayload.toRequestBody(JSON_MEDIA_TYPE))
+            val request = Request.Builder()
+                .url(SUPABASE_PAYMENTS_URL)
+                .post(paymentPayload.toRequestBody(JSON_MEDIA_TYPE))
                 .addHeader("apikey", apiKey)
                 .addHeader("Authorization", "Bearer $apiKey")
-                .addHeader("Prefer", "resolution=merge-duplicates")
                 .addHeader("Content-Type", "application/json")
                 .build()
 
-            okHttpClient.newCall(cashRequest).execute().use { response ->
-                cashDrawerSuccess = response.isSuccessful || response.code in 200..299
-                Log.d(TAG, "Supabase cash_drawer table update HTTP ${response.code} (Success: $cashDrawerSuccess)")
+            okHttpClient.newCall(request).execute().use { response ->
+                val success = response.isSuccessful || response.code in 200..299
+                Log.d(TAG, "Supabase atomic payment insert HTTP ${response.code} (Success: $success)")
+                success
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error updating Supabase cash_drawer table: ${e.message}")
+            Log.e(TAG, "Error posting atomic payment to Supabase: ${e.message}")
+            false
         }
-
-        invoiceSuccess && cashDrawerSuccess
     }
 
-    /**
-     * Queries GET /rest/v1/invoices?route_code=eq.${routeCode}&status=eq.ACTIVA from Supabase
-     */
     suspend fun fetchActiveInvoicesForRoute(routeCode: String): String? = withContext(Dispatchers.IO) {
         try {
             val url = "$SUPABASE_INVOICES_URL?route_code=eq.$routeCode&status=eq.ACTIVA"

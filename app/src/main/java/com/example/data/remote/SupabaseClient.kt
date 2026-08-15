@@ -1,4 +1,4 @@
-package com.example.data.remote
+﻿package com.example.data.remote
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
@@ -23,6 +23,24 @@ import java.util.concurrent.TimeUnit
 /**
  * Data Transfer Objects for Supabase PostgREST tables
  */
+@JsonClass(generateAdapter = true)
+data class SupabasePaymentDto(
+    @Json(name = "id") val id: Long? = null,
+    @Json(name = "invoice_id") val invoiceId: String,
+    @Json(name = "client_id") val clientId: String? = null,
+    @Json(name = "client_name") val clientName: String? = null,
+    @Json(name = "route_code") val routeCode: String = "001",
+    @Json(name = "amount") val amount: Double,
+    @Json(name = "payment_method") val paymentMethod: String = "EFECTIVO",
+    @Json(name = "quota_number") val quotaNumber: Int = 1,
+    @Json(name = "collected_lat") val collectedLat: Double? = null,
+    @Json(name = "collected_lng") val collectedLng: Double? = null,
+    @Json(name = "collected_by") val collectedBy: String? = "COBRADOR",
+    @Json(name = "notes") val notes: String? = null,
+    @Json(name = "receipt_num") val receiptNum: Long? = null,
+    @Json(name = "created_at") val createdAt: String? = null
+)
+
 @JsonClass(generateAdapter = true)
 data class SupabaseInvoiceDto(
     @Json(name = "id") val id: Long? = null,
@@ -91,6 +109,17 @@ data class SupabaseClientDto(
  * Retrofit interface for Supabase REST API (PostgREST)
  */
 interface SupabaseApiService {
+
+    // --- Payments (Atomic Ledger) ---
+    @POST("payments")
+    suspend fun recordPayment(
+        @Body payment: SupabasePaymentDto
+    ): Response<Void>
+
+    @GET("payments")
+    suspend fun getPaymentsForRoute(
+        @Query("route_code") routeCodeFilter: String
+    ): Response<List<SupabasePaymentDto>>
 
     // --- Invoices ---
     @GET("invoices")
@@ -234,4 +263,5 @@ object SupabaseClient {
         return retrofit.create(SupabaseApiService::class.java)
     }
 }
+
 
