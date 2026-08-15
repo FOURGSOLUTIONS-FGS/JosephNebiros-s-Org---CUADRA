@@ -212,11 +212,18 @@ object SupabaseClient {
         _apiService = null
     }
 
+    var userAccessToken: String? = null
+
+    fun setAuthToken(token: String?) {
+        userAccessToken = token
+    }
+
     private val authInterceptor = Interceptor { chain ->
         val original = chain.request()
+        val bearerToken = userAccessToken?.takeIf { it.isNotBlank() } ?: apiKey
         val requestBuilder = original.newBuilder()
             .header("apikey", apiKey)
-            .header("Authorization", "Bearer $apiKey")
+            .header("Authorization", "Bearer $bearerToken")
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
 
