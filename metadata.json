@@ -1,0 +1,6 @@
+{
+  "name": "Cobrador Diario",
+  "description": "Aplicación profesional para cobradores diarios con registro de clientes, préstamos, abonos y seguimiento de rutas en tiempo real con Foreground Service.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
