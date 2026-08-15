@@ -1,4 +1,4 @@
-package com.example.service
+﻿package com.example.service
 
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -19,6 +19,8 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.db.AppDatabase
 import com.example.data.repository.CobranzaRepository
+import com.example.data.remote.GpsLocationDto
+import com.example.data.remote.RetrofitClient
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
