@@ -285,6 +285,19 @@ class LocationTrackingService : Service() {
     }
 
     private fun handleNewLocation(location: Location) {
+        val isMock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            location.isMock
+        } else {
+            @Suppress("DEPRECATION")
+            location.isFromMockProvider
+        }
+
+        if (isMock) {
+            Log.w(TAG, "⚠️ ALERTA DE SEGURIDAD: Ubicación GPS simulada detectada (Mock Provider). Coordenada descartada.")
+            _cloudSyncStatus.value = "⚠️ GPS simulado detectado"
+            return
+        }
+
         _currentLocation.value = location
         _accuracyMeters.value = if (location.hasAccuracy()) location.accuracy else 0f
         if (location.hasBearing()) {
