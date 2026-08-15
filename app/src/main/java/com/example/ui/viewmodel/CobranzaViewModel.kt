@@ -274,6 +274,12 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
         photoUri: String? = null,
         onSuccess: ((Long) -> Unit)? = null
     ) {
+        if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) {
+            Log.w("CobranzaViewModel", "Intento de registro de abono inválido: $amount")
+            return
+        }
+        val cleanAmount = Math.min(amount, loan.remainingBalance)
+
         viewModelScope.launch {
             val loc = currentLocation.value
             val lat = loc?.latitude ?: client.latitude
@@ -283,7 +289,7 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
             val paymentId = repository.recordPayment(
                 loanId = loan.id,
                 clientId = client.id,
-                amount = amount,
+                amount = cleanAmount,
                 quotaNumber = nextQuotaNumber,
                 notes = notes,
                 paymentMethod = paymentMethod,

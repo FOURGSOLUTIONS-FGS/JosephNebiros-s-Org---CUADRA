@@ -118,6 +118,7 @@ class CobranzaRepository(private val database: AppDatabase) {
         latitude: Double? = null,
         longitude: Double? = null
     ): Long {
+        if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) return -1L
         val payment = PaymentEntity(
             loanId = loanId,
             clientId = clientId,
