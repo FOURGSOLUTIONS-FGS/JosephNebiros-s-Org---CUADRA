@@ -164,7 +164,7 @@ interface SupabaseApiService {
 object SupabaseClient {
 
     private const val DEFAULT_BASE_URL = "https://zgyhpjviwhckdpjmmdsx.supabase.co/rest/v1/"
-    private const val DEFAULT_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpneWhwanZpd2hja2RwbW1kc3giLCJyb2xlIjoiYW5vbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoyMDAwMDAwMDAwfQ.public-anon-key"
+    private const val DEFAULT_API_KEY = "sb_publishable_6qD62iUDo8v6lXJzA2SGng_6ows5wxG"
 
     var baseUrl: String = DEFAULT_BASE_URL
         private set
@@ -234,3 +234,4 @@ object SupabaseClient {
         return retrofit.create(SupabaseApiService::class.java)
     }
 }
+
