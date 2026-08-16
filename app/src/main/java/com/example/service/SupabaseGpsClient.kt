@@ -21,6 +21,11 @@ object SupabaseGpsClient {
     const val SUPABASE_INVOICES_URL = "$SUPABASE_BASE_URL/invoices"
     const val SUPABASE_CASH_DRAWER_URL = "$SUPABASE_BASE_URL/cash_drawer"
     const val SUPABASE_PAYMENTS_URL = "$SUPABASE_BASE_URL/payments"
+    const val SUPABASE_ALERTS_URL = "$SUPABASE_BASE_URL/alerts"
+
+    // Batching Buffer state (TraceOps Pattern)
+    private var lastGpsFlushTime = 0L
+    private const val FLUSH_INTERVAL_MS = 20_000L
 
     // Default Supabase Anon Key
     var apiKey: String = "sb_publishable_6qD62iUDo8v6lXJzA2SGng_6ows5wxG"
@@ -42,11 +47,71 @@ object SupabaseGpsClient {
     /**
      * Sends real-time GPS coordinates to Supabase (gps_tracking table)
      */
+        /**
+     * Sends an emergency Panic / Incident Alert to Supabase (alerts table)
+     * Broadcasts in real-time to the office dashboard.
+     */
+    suspend fun sendEmergencyAlert(
+        routeCode: String,
+        collectorName: String,
+        alertType: String,
+        location: Location?,
+        batteryPct: Int = 100,
+        notes: String = ""
+    ): Boolean = withContext(Dispatchers.IO) {
+        val nowIso = getIsoTimestamp()
+        try {
+            val speedKmh = if (location?.hasSpeed() == true) (location.speed * 3.6f).toInt() else 0
+            val payload = JSONObject().apply {
+                put("route_code", routeCode)
+                put("collector_name", collectorName)
+                put("alert_type", alertType)
+                put("latitude", location?.latitude ?: 10.9878)
+                put("longitude", location?.longitude ?: -74.7889)
+                put("battery", "$batteryPct%")
+                put("speed", "$speedKmh km/h")
+                put("status", "ACTIVA")
+                put("notes", notes)
+                put("created_at", nowIso)
+            }.toString()
+
+            val request = Request.Builder()
+                .url(SUPABASE_ALERTS_URL)
+                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            okHttpClient.newCall(request).execute().use { response ->
+                val success = response.isSuccessful || response.code in 200..299
+                Log.w(TAG, "🚨 ALERTA DE EMERGENCIA ($alertType) transmitida a Supabase: HTTP ${response.code} (Success: $success)")
+                success
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error enviando alerta de emergencia: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Sends real-time GPS coordinates to Supabase with Adaptive Batching (TraceOps Pattern)
+     */
     suspend fun sendGpsLocation(
         routeCode: String,
-        location: Location
+        location: Location,
+        forceImmediate: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val timeSinceLastFlush = now - lastGpsFlushTime
+
+        // Buffer/Throttle: If moving, throttle to FLUSH_INTERVAL_MS unless forced
+        if (!forceImmediate && timeSinceLastFlush < FLUSH_INTERVAL_MS) {
+            return@withContext true
+        }
+
         try {
+            lastGpsFlushTime = now
             val speedKmh = (if (location.hasSpeed()) location.speed * 3.6f else 0f).toInt()
             val speedFormatted = "$speedKmh km/h"
 
@@ -75,22 +140,17 @@ object SupabaseGpsClient {
                     Log.d(TAG, "Supabase GPS synced successfully (HTTP $code) for route: $routeCode")
                     true
                 } else {
-                    val errorBody = response.body?.string() ?: ""
-                    Log.w(TAG, "Supabase GPS sync HTTP $code response: $errorBody")
-                    code in 200..299
+                    Log.w(TAG, "Supabase GPS sync HTTP $code: ${response.message}")
+                    false
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error posting GPS coordinates to Supabase: ${e.message}")
+            Log.e(TAG, "Supabase GPS sync failed: ${e.message}")
             false
         }
     }
 
     /**
-     * Updates the invoice/loan status in Supabase (invoices table)
-     * and adds the collected amount to the cash drawer (cash_drawer table)
-     */
-        /**
      * Atomically records a payment in Supabase (payments table).
      * PostgreSQL trigger handles deducting invoice balance and updating cash drawer atomically.
      */
