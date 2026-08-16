@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import com.example.ui.components.FloatingSosButton
+import com.example.ui.components.VisitProofDialog
+import androidx.compose.material.icons.filled.CameraAlt
 import com.example.ui.components.EmergencyPanicDialog
 
 import android.content.Intent
@@ -427,6 +429,18 @@ fun LiveMapScreen(
                                 }
 
                                 if (!isCollected && loan != null) {
+                                    IconButton(
+                                        onClick = {
+                                            selectedClientForVisitProof = item
+                                            selectedClientForPopup = null
+                                        },
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .background(Color(0xFF8B5CF6), CircleShape)
+                                    ) {
+                                        Icon(Icons.Default.CameraAlt, contentDescription = "Evidencia Visita POD", tint = Color.White, modifier = Modifier.size(20.dp))
+                                    }
+
                                     Button(
                                         onClick = {
                                             selectedClientForPayment = item
@@ -588,6 +602,18 @@ fun LiveMapScreen(
     }
 
     // Dialogs
+    selectedClientForVisitProof?.let { item ->
+        item.activeLoan?.let { loan ->
+            VisitProofDialog(
+                client = item.client,
+                loan = loan,
+                currentLocation = currentLocation,
+                onDismiss = { selectedClientForVisitProof = null },
+                onSuccess = { selectedClientForVisitProof = null }
+            )
+        }
+    }
+
     selectedClientForPayment?.let { item ->
         PaymentDialog(
             item = item,

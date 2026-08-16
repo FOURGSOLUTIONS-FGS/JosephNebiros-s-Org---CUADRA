@@ -307,3 +307,23 @@ object SupabaseClient {
 }
 
 
+
+
+@JsonClass(generateAdapter = true)
+data class SupabaseVisitProofDto(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "invoice_id") val invoiceId: String,
+    @Json(name = "client_id") val clientId: String? = null,
+    @Json(name = "client_name") val clientName: String? = null,
+    @Json(name = "route_code") val routeCode: String = "001",
+    @Json(name = "visit_status") val visitStatus: String,
+    @Json(name = "photo_url") val photoUrl: String? = null,
+    @Json(name = "signature_data") val signatureData: String? = null,
+    @Json(name = "promise_date") val promiseDate: String? = null,
+    @Json(name = "notes") val notes: String = "",
+    @Json(name = "collected_lat") val collectedLat: Double? = null,
+    @Json(name = "collected_lng") val collectedLng: Double? = null,
+    @Json(name = "distance_to_client_meters") val distanceToClientMeters: Double = 0.0,
+    @Json(name = "is_on_site") val isOnSite: Boolean = true,
+    @Json(name = "created_at") val createdAt: String? = null
+)

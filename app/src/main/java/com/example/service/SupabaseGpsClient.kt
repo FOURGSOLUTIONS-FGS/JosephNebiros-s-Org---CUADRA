@@ -22,6 +22,7 @@ object SupabaseGpsClient {
     const val SUPABASE_CASH_DRAWER_URL = "$SUPABASE_BASE_URL/cash_drawer"
     const val SUPABASE_PAYMENTS_URL = "$SUPABASE_BASE_URL/payments"
     const val SUPABASE_ALERTS_URL = "$SUPABASE_BASE_URL/alerts"
+    const val SUPABASE_VISIT_PROOFS_URL = "$SUPABASE_BASE_URL/visit_proofs"
 
     // Batching Buffer state (TraceOps Pattern)
     private var lastGpsFlushTime = 0L
@@ -238,5 +239,61 @@ object SupabaseGpsClient {
             null
         }
     }
-}
 
+    /**
+     * Records a Proof of Visit (POD) when client does not pay (Absent, Refusal, Promise)
+     */
+    suspend fun recordVisitProofToSupabase(
+        loanId: Long,
+        clientId: Long,
+        clientName: String,
+        routeCode: String,
+        visitStatus: String,
+        notes: String,
+        promiseDate: String?,
+        photoBase64: String?,
+        latitude: Double?,
+        longitude: Double?,
+        distanceToClientMeters: Double = 0.0,
+        isOnSite: Boolean = true
+    ): Boolean = withContext(Dispatchers.IO) {
+        val nowIso = getIsoTimestamp()
+        val invoiceIdStr = "F-$loanId"
+
+        try {
+            val payload = JSONObject().apply {
+                put("invoice_id", invoiceIdStr)
+                put("client_id", clientId.toString())
+                put("client_name", clientName)
+                put("route_code", routeCode)
+                put("visit_status", visitStatus)
+                put("notes", notes)
+                if (!promiseDate.isNullOrEmpty()) put("promise_date", promiseDate)
+                if (!photoBase64.isNullOrEmpty()) put("photo_url", photoBase64)
+                if (latitude != null) put("collected_lat", latitude)
+                if (longitude != null) put("collected_lng", longitude)
+                put("distance_to_client_meters", distanceToClientMeters)
+                put("is_on_site", isOnSite)
+                put("created_at", nowIso)
+            }.toString()
+
+            val request = Request.Builder()
+                .url(SUPABASE_VISIT_PROOFS_URL)
+                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            okHttpClient.newCall(request).execute().use { response ->
+                val success = response.isSuccessful || response.code in 200..299
+                Log.d(TAG, "📸 Evidencia de Visita ($visitStatus) registrada en Supabase: HTTP ${response.code} (Success: $success)")
+                success
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error enviando evidencia de visita: ${e.message}")
+            false
+        }
+    }
+
+}
