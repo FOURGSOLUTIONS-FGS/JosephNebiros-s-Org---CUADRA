@@ -9,6 +9,7 @@ import com.example.data.model.LoanEntity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.net.URLEncoder
 
 /**
  * Utility helper to format and dispatch digital receipts and payment reminders via WhatsApp.
@@ -39,22 +40,28 @@ object WhatsAppReceiptHelper {
         val addressText = if (!address.isNullOrBlank()) "📍 _${address}_\n" else ""
         val statusText = if (remainingBalance <= 0.01) "🎉 *¡PRÉSTAMO CANCELADO EN SU TOTALIDAD!*" else "✅ *AL DÍA*"
 
+                val encodedName = try { URLEncoder.encode(clientName, "UTF-8") } catch (e: Exception) { clientName }
+        val receiptUrl = "https://ventasmiles-v5.vercel.app/recibo?rec=$code&amount=$amountPaid&client=$encodedName&quota=$quotaNumber"
+
         return """
 🧾 *COMPROBANTE OFICIAL DE PAGO* 🧾
-━━━━━━━━━━━━━━━━━━━━━
+───────────────────────
 👤 *Cliente:* $clientName
-$businessText$addressText━━━━━━━━━━━━━━━━━━━━━
-💰 *VALOR ABONADO:* $amountFormatted
-📋 *Cuota:* #$quotaNumber de $totalQuotas
+$businessText$addressText───────────────────────
+💵 *VALOR ABONADO:* $amountFormatted
+🔢 *Cuota:* #$quotaNumber de $totalQuotas
 💳 *Medio de Pago:* $paymentMethod
-📉 *Saldo Restante:* $balanceFormatted
-🛡️ *Estado:* $statusText
-━━━━━━━━━━━━━━━━━━━━━
-🗓️ *Fecha:* $dateStr
-🆔 *N° Comprobante:* #$code
+📊 *Saldo Restante:* $balanceFormatted
+📌 *Estado:* $statusText
+───────────────────────
+📅 *Fecha:* $dateStr
+📑 *N° Comprobante:* #$code
 🛵 *Atendido por:* $collectorName
-━━━━━━━━━━━━━━━━━━━━━
-🌟 *¡Muchas gracias por su puntualidad y confianza!*
+───────────────────────
+✅ *Verifica tu comprobante oficial con QR:*
+$receiptUrl
+
+🤝 *¡Muchas gracias por su puntualidad y confianza!*
 📱 _Conserve este mensaje como soporte de su pago._
         """.trimIndent()
     }
