@@ -20,16 +20,9 @@ object SupabaseGpsClient {
     const val SUPABASE_GPS_URL = "$SUPABASE_BASE_URL/gps_tracking"
     const val SUPABASE_INVOICES_URL = "$SUPABASE_BASE_URL/invoices"
     const val SUPABASE_CASH_DRAWER_URL = "$SUPABASE_BASE_URL/cash_drawer"
-    const val SUPABASE_PAYMENTS_URL = "$SUPABASE_BASE_URL/payments"
-    const val SUPABASE_ALERTS_URL = "$SUPABASE_BASE_URL/alerts"
-    const val SUPABASE_VISIT_PROOFS_URL = "$SUPABASE_BASE_URL/visit_proofs"
-
-    // Batching Buffer state (TraceOps Pattern)
-    private var lastGpsFlushTime = 0L
-    private const val FLUSH_INTERVAL_MS = 20_000L
 
     // Default Supabase Anon Key
-    var apiKey: String = "sb_publishable_6qD62iUDo8v6lXJzA2SGng_6ows5wxG"
+    var apiKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpneWhwanZpd2hja2RwbW1kc3giLCJyb2xlIjoiYW5vbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoyMDAwMDAwMDAwfQ.public-anon-key"
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
@@ -40,79 +33,37 @@ object SupabaseGpsClient {
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
-    private fun getIsoTimestamp(): String {
+    /**
+     * Generates a trusted ISO timestamp with validation against device clock manipulation.
+     * If the local timestamp is invalid (> 5 min future or > 7 days past), standard normalized timestamp is generated.
+     */
+    private fun getIsoTimestamp(timestampMillis: Long? = null): String {
+        val now = System.currentTimeMillis()
+        val target = timestampMillis ?: now
+
+        // Check if timestamp is within bounds (not > 5 mins in future, not > 7 days in past)
+        val fiveMinutesFuture = now + (5 * 60 * 1000)
+        val sevenDaysPast = now - (7L * 24 * 60 * 60 * 1000)
+
+        val trustedTime = if (target > fiveMinutesFuture || target < sevenDaysPast) {
+            Log.w(TAG, "Device clock anomaly detected ($target vs current $now). Normalizing to server trusted timestamp.")
+            now
+        } else {
+            target
+        }
+
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.getDefault())
-        return sdf.format(Date())
+        return sdf.format(Date(trustedTime))
     }
 
     /**
      * Sends real-time GPS coordinates to Supabase (gps_tracking table)
      */
-        /**
-     * Sends an emergency Panic / Incident Alert to Supabase (alerts table)
-     * Broadcasts in real-time to the office dashboard.
-     */
-    suspend fun sendEmergencyAlert(
-        routeCode: String,
-        collectorName: String,
-        alertType: String,
-        location: Location?,
-        batteryPct: Int = 100,
-        notes: String = ""
-    ): Boolean = withContext(Dispatchers.IO) {
-        val nowIso = getIsoTimestamp()
-        try {
-            val speedKmh = if (location?.hasSpeed() == true) (location.speed * 3.6f).toInt() else 0
-            val payload = JSONObject().apply {
-                put("route_code", routeCode)
-                put("collector_name", collectorName)
-                put("alert_type", alertType)
-                put("latitude", location?.latitude ?: 10.9878)
-                put("longitude", location?.longitude ?: -74.7889)
-                put("battery", "$batteryPct%")
-                put("speed", "$speedKmh km/h")
-                put("status", "ACTIVA")
-                put("notes", notes)
-                put("created_at", nowIso)
-            }.toString()
-
-            val request = Request.Builder()
-                .url(SUPABASE_ALERTS_URL)
-                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
-                .addHeader("Content-Type", "application/json")
-                .build()
-
-            okHttpClient.newCall(request).execute().use { response ->
-                val success = response.isSuccessful || response.code in 200..299
-                Log.w(TAG, "🚨 ALERTA DE EMERGENCIA ($alertType) transmitida a Supabase: HTTP ${response.code} (Success: $success)")
-                success
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error enviando alerta de emergencia: ${e.message}")
-            false
-        }
-    }
-
-    /**
-     * Sends real-time GPS coordinates to Supabase with Adaptive Batching (TraceOps Pattern)
-     */
     suspend fun sendGpsLocation(
         routeCode: String,
-        location: Location,
-        forceImmediate: Boolean = false
+        location: Location
     ): Boolean = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val timeSinceLastFlush = now - lastGpsFlushTime
-
-        // Buffer/Throttle: If moving, throttle to FLUSH_INTERVAL_MS unless forced
-        if (!forceImmediate && timeSinceLastFlush < FLUSH_INTERVAL_MS) {
-            return@withContext true
-        }
-
         try {
-            lastGpsFlushTime = now
             val speedKmh = (if (location.hasSpeed()) location.speed * 3.6f else 0f).toInt()
             val speedFormatted = "$speedKmh km/h"
 
@@ -141,19 +92,20 @@ object SupabaseGpsClient {
                     Log.d(TAG, "Supabase GPS synced successfully (HTTP $code) for route: $routeCode")
                     true
                 } else {
-                    Log.w(TAG, "Supabase GPS sync HTTP $code: ${response.message}")
-                    false
+                    val errorBody = response.body?.string() ?: ""
+                    Log.w(TAG, "Supabase GPS sync HTTP $code response: $errorBody")
+                    code in 200..299
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Supabase GPS sync failed: ${e.message}")
+            Log.e(TAG, "Error posting GPS coordinates to Supabase: ${e.message}")
             false
         }
     }
 
     /**
-     * Atomically records a payment in Supabase (payments table).
-     * PostgreSQL trigger handles deducting invoice balance and updating cash drawer atomically.
+     * Updates the invoice/loan status in Supabase (invoices table)
+     * and adds the collected amount to the cash drawer (cash_drawer table)
      */
     suspend fun recordPaymentToSupabase(
         loanId: Long,
@@ -169,53 +121,115 @@ object SupabaseGpsClient {
         notes: String,
         latitude: Double?,
         longitude: Double?,
-        routeCode: String = "001",
-        distanceToClientMeters: Double = 0.0,
-        isOnSite: Boolean = true
+        paymentTimestampMillis: Long? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        val nowIso = getIsoTimestamp()
-        val invoiceIdStr = "F-$loanId"
+        var invoiceSuccess = false
+        var cashDrawerSuccess = false
+        val nowIso = getIsoTimestamp(paymentTimestampMillis)
 
+        // 1. Update/Merge in invoices table
         try {
-            val paymentPayload = JSONObject().apply {
-                put("invoice_id", invoiceIdStr)
-                put("client_id", clientId.toString())
+            val invoicePayload = JSONObject().apply {
+                put("id", loanId)
+                put("loan_id", loanId)
+                put("client_id", clientId)
                 put("client_name", clientName)
-                put("route_code", routeCode)
-                put("amount", amount)
-                put("payment_method", paymentMethod.uppercase())
+                put("amount_paid", amount)
+                put("total_paid", totalPaid)
+                put("remaining_balance", remainingBalance)
                 put("quota_number", quotaNumber)
+                put("paid_quotas", paidQuotas)
+                put("total_quotas", totalQuotas)
+                put("status", if (remainingBalance <= 0.01) "PAGADO" else "ACTIVO")
+                put("payment_method", paymentMethod)
+                put("notes", notes)
                 if (latitude != null) put("collected_lat", latitude)
                 if (longitude != null) put("collected_lng", longitude)
-                put("distance_to_client_meters", distanceToClientMeters)
-                put("is_on_site", isOnSite)
-                put("collected_by", "COBRADOR")
-                put("notes", notes)
-                put("created_at", nowIso)
+                put("last_payment_date", nowIso)
+                put("last_sync", "En vivo")
             }.toString()
 
-            val request = Request.Builder()
-                .url(SUPABASE_PAYMENTS_URL)
-                .post(paymentPayload.toRequestBody(JSON_MEDIA_TYPE))
+            val invoiceRequest = Request.Builder()
+                .url(SUPABASE_INVOICES_URL)
+                .post(invoicePayload.toRequestBody(JSON_MEDIA_TYPE))
                 .addHeader("apikey", apiKey)
                 .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Prefer", "resolution=merge-duplicates")
                 .addHeader("Content-Type", "application/json")
                 .build()
 
-            okHttpClient.newCall(request).execute().use { response ->
-                val success = response.isSuccessful || response.code in 200..299
-                Log.d(TAG, "Supabase atomic payment insert HTTP ${response.code} (Success: $success)")
-                success
+            okHttpClient.newCall(invoiceRequest).execute().use { response ->
+                invoiceSuccess = response.isSuccessful || response.code in 200..299
+                Log.d(TAG, "Supabase invoices table update HTTP ${response.code} (Success: $invoiceSuccess)")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error posting atomic payment to Supabase: ${e.message}")
-            false
+            Log.e(TAG, "Error updating Supabase invoices table: ${e.message}")
         }
+
+        // 2. Insert recaudo in cash_drawer table
+        try {
+            val cashPayload = JSONObject().apply {
+                put("loan_id", loanId)
+                put("client_id", clientId)
+                put("client_name", clientName)
+                put("amount", amount)
+                put("type", "RECAUDO")
+                put("concept", "Cobro Cuota #$quotaNumber ($clientName)")
+                put("payment_method", paymentMethod)
+                if (latitude != null) put("collected_lat", latitude)
+                if (longitude != null) put("collected_lng", longitude)
+                put("created_at", nowIso)
+                put("status", "COMPLETADO")
+            }.toString()
+
+            val cashRequest = Request.Builder()
+                .url(SUPABASE_CASH_DRAWER_URL)
+                .post(cashPayload.toRequestBody(JSON_MEDIA_TYPE))
+                .addHeader("apikey", apiKey)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Prefer", "resolution=merge-duplicates")
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            okHttpClient.newCall(cashRequest).execute().use { response ->
+                cashDrawerSuccess = response.isSuccessful || response.code in 200..299
+                Log.d(TAG, "Supabase cash_drawer table update HTTP ${response.code} (Success: $cashDrawerSuccess)")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating Supabase cash_drawer table: ${e.message}")
+        }
+
+        invoiceSuccess && cashDrawerSuccess
     }
 
-    suspend fun fetchActiveInvoicesForRoute(routeCode: String): String? = withContext(Dispatchers.IO) {
+    /**
+     * Converts a millisecond timestamp to ISO-8601 string for PostgREST delta queries.
+     */
+    fun formatToIso(timestampMillis: Long): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return sdf.format(Date(timestampMillis))
+    }
+
+    /**
+     * Queries GET /rest/v1/invoices?route_code=eq.${routeCode}&status=eq.ACTIVA from Supabase.
+     * When lastModifiedIso is provided, performs an INCREMENTAL DELTA SYNC fetching only
+     * invoices created or updated after the specified timestamp.
+     */
+    suspend fun fetchActiveInvoicesDelta(
+        routeCode: String,
+        lastModifiedIso: String? = null
+    ): String? = withContext(Dispatchers.IO) {
         try {
-            val url = "$SUPABASE_INVOICES_URL?route_code=eq.$routeCode&status=eq.ACTIVA"
+            val baseUrl = "$SUPABASE_INVOICES_URL?route_code=eq.$routeCode&status=eq.ACTIVA"
+            val url = if (!lastModifiedIso.isNullOrBlank()) {
+                "$baseUrl&or=(updated_at.gt.$lastModifiedIso,last_payment_date.gt.$lastModifiedIso,created_at.gt.$lastModifiedIso)"
+            } else {
+                baseUrl
+            }
+
+            Log.d(TAG, "Fetching invoices from Supabase (Delta mode: ${!lastModifiedIso.isNullOrBlank()}, timestamp: $lastModifiedIso)")
+
             val request = Request.Builder()
                 .url(url)
                 .get()
@@ -227,7 +241,7 @@ object SupabaseGpsClient {
             okHttpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val body = response.body?.string()
-                    Log.d(TAG, "Supabase active invoices fetched successfully for route $routeCode: ${body?.take(200)}")
+                    Log.d(TAG, "Supabase invoices fetched successfully (HTTP ${response.code})")
                     body
                 } else {
                     Log.w(TAG, "Supabase fetch invoices HTTP ${response.code}: ${response.body?.string()}")
@@ -235,65 +249,15 @@ object SupabaseGpsClient {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching active invoices from Supabase: ${e.message}")
+            Log.e(TAG, "Error fetching active invoices delta from Supabase: ${e.message}")
             null
         }
     }
 
     /**
-     * Records a Proof of Visit (POD) when client does not pay (Absent, Refusal, Promise)
+     * Queries GET /rest/v1/invoices?route_code=eq.${routeCode}&status=eq.ACTIVA from Supabase
      */
-    suspend fun recordVisitProofToSupabase(
-        loanId: Long,
-        clientId: Long,
-        clientName: String,
-        routeCode: String,
-        visitStatus: String,
-        notes: String,
-        promiseDate: String?,
-        photoBase64: String?,
-        latitude: Double?,
-        longitude: Double?,
-        distanceToClientMeters: Double = 0.0,
-        isOnSite: Boolean = true
-    ): Boolean = withContext(Dispatchers.IO) {
-        val nowIso = getIsoTimestamp()
-        val invoiceIdStr = "F-$loanId"
-
-        try {
-            val payload = JSONObject().apply {
-                put("invoice_id", invoiceIdStr)
-                put("client_id", clientId.toString())
-                put("client_name", clientName)
-                put("route_code", routeCode)
-                put("visit_status", visitStatus)
-                put("notes", notes)
-                if (!promiseDate.isNullOrEmpty()) put("promise_date", promiseDate)
-                if (!photoBase64.isNullOrEmpty()) put("photo_url", photoBase64)
-                if (latitude != null) put("collected_lat", latitude)
-                if (longitude != null) put("collected_lng", longitude)
-                put("distance_to_client_meters", distanceToClientMeters)
-                put("is_on_site", isOnSite)
-                put("created_at", nowIso)
-            }.toString()
-
-            val request = Request.Builder()
-                .url(SUPABASE_VISIT_PROOFS_URL)
-                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
-                .addHeader("apikey", apiKey)
-                .addHeader("Authorization", "Bearer $apiKey")
-                .addHeader("Content-Type", "application/json")
-                .build()
-
-            okHttpClient.newCall(request).execute().use { response ->
-                val success = response.isSuccessful || response.code in 200..299
-                Log.d(TAG, "📸 Evidencia de Visita ($visitStatus) registrada en Supabase: HTTP ${response.code} (Success: $success)")
-                success
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error enviando evidencia de visita: ${e.message}")
-            false
-        }
-    }
-
+    suspend fun fetchActiveInvoicesForRoute(routeCode: String): String? =
+        fetchActiveInvoicesDelta(routeCode, null)
 }
+

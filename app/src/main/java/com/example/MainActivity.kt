@@ -1,4 +1,4 @@
-﻿package com.example
+package com.example
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -91,7 +91,6 @@ import com.example.ui.viewmodel.CobranzaViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        com.example.data.remote.SupabaseClient.init(applicationContext)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -107,6 +106,7 @@ fun CobradorAppMain(viewModel: CobranzaViewModel = viewModel()) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
     val pendingSyncCount by viewModel.pendingOfflineSyncCount.collectAsStateWithLifecycle()
+    val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableIntStateOf(0) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -280,6 +280,7 @@ fun CobradorAppMain(viewModel: CobranzaViewModel = viewModel()) {
                 NetworkStatusBar(
                     isOnline = isOnline,
                     pendingSyncCount = pendingSyncCount,
+                    syncState = syncState,
                     onSyncNow = {
                         viewModel.syncPendingOfflineData()
                     }
@@ -380,4 +381,3 @@ fun CobradorAppMain(viewModel: CobranzaViewModel = viewModel()) {
         }
     }
 }
-

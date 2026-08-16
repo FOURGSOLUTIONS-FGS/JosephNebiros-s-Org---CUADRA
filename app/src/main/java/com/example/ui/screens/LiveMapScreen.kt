@@ -1,10 +1,5 @@
 package com.example.ui.screens
 
-import com.example.ui.components.FloatingSosButton
-import com.example.ui.components.VisitProofDialog
-import androidx.compose.material.icons.filled.CameraAlt
-import com.example.ui.components.EmergencyPanicDialog
-
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
@@ -399,18 +394,78 @@ fun LiveMapScreen(
                                 }
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                // Waze button
+                                IconButton(
+                                    onClick = {
+                                        com.example.util.NavigationUtils.openWazeNavigation(
+                                            context = context,
+                                            destinationLat = client.latitude,
+                                            destinationLng = client.longitude,
+                                            destinationAddress = client.address,
+                                            destinationName = client.name
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .background(Color(0xFF00D4D4), CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Navigation,
+                                        contentDescription = "Waze",
+                                        tint = Color(0xFF0F172A),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                // Google Maps button
+                                IconButton(
+                                    onClick = {
+                                        com.example.util.NavigationUtils.openGoogleMapsNavigation(
+                                            context = context,
+                                            destinationLat = client.latitude,
+                                            destinationLng = client.longitude,
+                                            destinationAddress = client.address,
+                                            destinationName = client.name
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .background(Color(0xFF2563EB), CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Default.LocationOn,
+                                        contentDescription = "Google Maps",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
                                 if (client.phone.isNotEmpty()) {
                                     IconButton(
                                         onClick = {
-                                            val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${client.phone}"))
-                                            context.startActivity(dialIntent)
+                                            val reminder = com.example.util.WhatsAppReceiptHelper.formatPaymentReminder(
+                                                clientName = client.name,
+                                                quotaAmount = loan?.quotaAmount ?: 0.0,
+                                                remainingBalance = loan?.remainingBalance ?: 0.0,
+                                                quotasPending = ((loan?.totalQuotas ?: 24) - (loan?.paidQuotas ?: 0)).coerceAtLeast(0)
+                                            )
+                                            com.example.util.WhatsAppReceiptHelper.sendWhatsAppMessage(
+                                                context = context,
+                                                phoneNumber = client.phone,
+                                                message = reminder
+                                            )
                                         },
                                         modifier = Modifier
-                                            .size(40.dp)
-                                            .background(Slate800, CircleShape)
+                                            .size(38.dp)
+                                            .background(Color(0xFF25D366), CircleShape)
                                     ) {
-                                        Icon(Icons.Default.Phone, contentDescription = "Llamar", tint = Color.White)
+                                        Icon(
+                                            Icons.Default.Phone,
+                                            contentDescription = "WhatsApp",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
                                 }
 
@@ -421,36 +476,25 @@ fun LiveMapScreen(
                                             selectedClientForPopup = null
                                         },
                                         modifier = Modifier
-                                            .size(40.dp)
+                                            .size(38.dp)
                                             .background(Slate800, CircleShape)
                                     ) {
-                                        Icon(Icons.Default.PinDrop, contentDescription = "Fijar GPS actual", tint = GeometricAccentLight)
+                                        Icon(Icons.Default.PinDrop, contentDescription = "Fijar GPS actual", tint = GeometricAccentLight, modifier = Modifier.size(18.dp))
                                     }
                                 }
 
                                 if (!isCollected && loan != null) {
-                                    IconButton(
-                                        onClick = {
-                                            selectedClientForVisitProof = item
-                                            selectedClientForPopup = null
-                                        },
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .background(Color(0xFF8B5CF6), CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.CameraAlt, contentDescription = "Evidencia Visita POD", tint = Color.White, modifier = Modifier.size(20.dp))
-                                    }
-
                                     Button(
                                         onClick = {
                                             selectedClientForPayment = item
                                             selectedClientForPopup = null
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = GeometricAccent),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.height(38.dp)
                                     ) {
                                         Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Text("Cobrar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
@@ -602,18 +646,6 @@ fun LiveMapScreen(
     }
 
     // Dialogs
-    selectedClientForVisitProof?.let { item ->
-        item.activeLoan?.let { loan ->
-            VisitProofDialog(
-                client = item.client,
-                loan = loan,
-                currentLocation = currentLocation,
-                onDismiss = { selectedClientForVisitProof = null },
-                onSuccess = { selectedClientForVisitProof = null }
-            )
-        }
-    }
-
     selectedClientForPayment?.let { item ->
         PaymentDialog(
             item = item,
@@ -660,7 +692,10 @@ fun LiveMapScreen(
                     amount = pending.amount,
                     quotaNumber = nextQ,
                     remainingBalance = newBal,
-                    receiptText = receiptText
+                    receiptText = receiptText,
+                    clientPhone = pending.client.phone,
+                    clientAlias = pending.client.aliasOrBusiness,
+                    clientAddress = pending.client.address
                 )
                 pendingConfirmation = null
             }
@@ -675,6 +710,7 @@ fun LiveMapScreen(
             quotaNumber = success.quotaNumber,
             remainingBalance = success.remainingBalance,
             receiptText = success.receiptText,
+            clientPhone = success.clientPhone,
             onDismiss = { paymentSuccessInfo = null }
         )
     }

@@ -11,6 +11,7 @@ import com.example.data.model.ReminderEntity
 import com.example.data.model.RoutePointEntity
 import com.example.data.model.TrackingSessionEntity
 import com.example.service.SupabaseGpsClient
+import com.example.util.NetworkMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -28,13 +29,20 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-class CobranzaRepository(private val database: AppDatabase) {
+class CobranzaRepository(
+    private val database: AppDatabase,
+    private val networkMonitor: NetworkMonitor? = null
+) {
     private val clientDao = database.clientDao()
     private val loanDao = database.loanDao()
     private val paymentDao = database.paymentDao()
     private val routeDao = database.routeDao()
     private val expenseDao = database.expenseDao()
     private val reminderDao = database.reminderDao()
+
+    val syncManager: SyncManager? = networkMonitor?.let {
+        SyncManager(database, it)
+    }
 
     fun getTodayStartAndEndTimestamps(): Pair<Long, Long> {
         val calendar = Calendar.getInstance()
@@ -118,7 +126,6 @@ class CobranzaRepository(private val database: AppDatabase) {
         latitude: Double? = null,
         longitude: Double? = null
     ): Long {
-        if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) return -1L
         val payment = PaymentEntity(
             loanId = loanId,
             clientId = clientId,
@@ -147,13 +154,6 @@ class CobranzaRepository(private val database: AppDatabase) {
                 val paidQuotas = updatedLoan?.paidQuotas ?: quotaNumber
                 val totalQuotas = updatedLoan?.totalQuotas ?: 24
 
-                var distMeters = 0.0
-                var onSite = true
-                if (latitude != null && longitude != null && client != null && client.latitude != 0.0 && client.longitude != 0.0) {
-                    distMeters = calculateDistanceMeters(latitude, longitude, client.latitude, client.longitude)
-                    onSite = distMeters <= 150.0
-                }
-
                 val success = SupabaseGpsClient.recordPaymentToSupabase(
                     loanId = loanId,
                     clientId = clientId,
@@ -167,9 +167,7 @@ class CobranzaRepository(private val database: AppDatabase) {
                     paymentMethod = paymentMethod,
                     notes = notes,
                     latitude = latitude,
-                    longitude = longitude,
-                    distanceToClientMeters = distMeters,
-                    isOnSite = onSite
+                    longitude = longitude
                 )
                 if (success) {
                     paymentDao.markPaymentSynced(paymentId)
@@ -186,6 +184,11 @@ class CobranzaRepository(private val database: AppDatabase) {
      * Sincroniza todos los pagos que se registraron mientras el dispositivo estaba offline.
      */
     suspend fun syncPendingOfflinePayments(): Int = withContext(Dispatchers.IO) {
+        if (syncManager != null) {
+            val result = syncManager.syncUnsyncedChanges()
+            return@withContext result.paymentsSynced
+        }
+
         val unsynced = paymentDao.getUnsyncedPayments()
         var syncedCount = 0
         for (payment in unsynced) {
@@ -212,7 +215,8 @@ class CobranzaRepository(private val database: AppDatabase) {
                     paymentMethod = paymentMethodToLabel(payment.paymentMethod),
                     notes = payment.notes,
                     latitude = payment.collectedLatitude,
-                    longitude = payment.collectedLongitude
+                    longitude = payment.collectedLongitude,
+                    paymentTimestampMillis = payment.date
                 )
                 if (success) {
                     paymentDao.markPaymentSynced(payment.id)
@@ -392,6 +396,96 @@ class CobranzaRepository(private val database: AppDatabase) {
                 sin(dLon / 2) * sin(dLon / 2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return r * c
+    }
+
+    /**
+     * Incremental Delta Sync (Fase 1):
+     * Consulta GET /rest/v1/invoices?route_code=eq.${routeCode}&status=eq.ACTIVA&updated_at=gt.${lastModifiedIso}
+     * Descarga y fusiona únicamente registros creados o modificados desde la última sincronización.
+     */
+    suspend fun syncRouteDeltaFromSupabase(routeCode: String, lastModifiedIso: String? = null): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val jsonString = SupabaseGpsClient.fetchActiveInvoicesDelta(routeCode, lastModifiedIso)
+                ?: return@withContext Result.failure(Exception("Sin respuesta del servidor Supabase o fallo de red."))
+
+            val jsonArray = JSONArray(jsonString)
+            var syncedCount = 0
+
+            for (i in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(i)
+
+                // 1. Extraer datos del cliente
+                val clientId = item.optLong("client_id", item.optLong("clientId", if (item.has("id")) item.optLong("id") else (i + 1).toLong()))
+                val clientName = item.optString("client_name", item.optString("customer_name", item.optString("name", "Cliente #$clientId")))
+                val alias = item.optString("alias_or_business", item.optString("business_name", item.optString("alias", "")))
+                val phone = item.optString("phone", item.optString("telephone", ""))
+                val address = item.optString("address", item.optString("address_line", ""))
+                
+                val lat = if (item.has("lat") && !item.isNull("lat")) item.optDouble("lat")
+                    else if (item.has("latitude") && !item.isNull("latitude")) item.optDouble("latitude")
+                    else if (item.has("collected_lat") && !item.isNull("collected_lat")) item.optDouble("collected_lat")
+                    else null
+
+                val lng = if (item.has("lng") && !item.isNull("lng")) item.optDouble("lng")
+                    else if (item.has("longitude") && !item.isNull("longitude")) item.optDouble("longitude")
+                    else if (item.has("collected_lng") && !item.isNull("collected_lng")) item.optDouble("collected_lng")
+                    else null
+
+                val notes = item.optString("notes", "")
+                val visitOrder = item.optInt("visit_order", item.optInt("order", i + 1))
+
+                val existingClient = clientDao.getClientById(clientId)
+                val clientEntity = ClientEntity(
+                    id = clientId,
+                    name = clientName,
+                    aliasOrBusiness = alias,
+                    phone = phone,
+                    address = address,
+                    latitude = if (lat != null && !lat.isNaN()) lat else existingClient?.latitude,
+                    longitude = if (lng != null && !lng.isNaN()) lng else existingClient?.longitude,
+                    notes = notes.ifBlank { existingClient?.notes ?: "" },
+                    visitOrder = if (visitOrder > 0) visitOrder else (existingClient?.visitOrder ?: (i + 1)),
+                    isActive = true
+                )
+                clientDao.insertClient(clientEntity)
+
+                // 2. Extraer datos del préstamo / factura
+                val loanId = item.optLong("loan_id", item.optLong("loanId", item.optLong("id", clientId)))
+                val amountBorrowed = item.optDouble("amount_borrowed", item.optDouble("amount", item.optDouble("principal", 1000000.0)))
+                val interestRate = item.optDouble("interest_rate", item.optDouble("interest", 20.0))
+                val totalToPay = item.optDouble("total_to_pay", item.optDouble("total_amount", amountBorrowed * (1.0 + (interestRate / 100.0))))
+                val totalPaid = item.optDouble("total_paid", item.optDouble("amount_paid", 0.0))
+                val remainingBalance = item.optDouble("remaining_balance", item.optDouble("balance", totalToPay - totalPaid))
+                val totalQuotas = item.optInt("total_quotas", 24)
+                val quotaAmount = item.optDouble("quota_amount", item.optDouble("daily_quota", totalToPay / totalQuotas))
+                val paidQuotas = item.optInt("paid_quotas", (totalPaid / (if (quotaAmount > 0) quotaAmount else 1.0)).toInt())
+                val frequency = item.optString("frequency", "DIARIO")
+
+                val existingLoan = loanDao.getLoanById(loanId)
+                val loanEntity = LoanEntity(
+                    id = loanId,
+                    clientId = clientId,
+                    amountBorrowed = amountBorrowed,
+                    interestRate = interestRate,
+                    totalToPay = totalToPay,
+                    totalPaid = if (existingLoan != null && existingLoan.totalPaid > totalPaid) existingLoan.totalPaid else totalPaid,
+                    remainingBalance = if (existingLoan != null && existingLoan.remainingBalance < remainingBalance) existingLoan.remainingBalance else remainingBalance.coerceAtLeast(0.0),
+                    quotaAmount = quotaAmount,
+                    totalQuotas = totalQuotas,
+                    paidQuotas = if (existingLoan != null && existingLoan.paidQuotas > paidQuotas) existingLoan.paidQuotas else paidQuotas,
+                    frequency = frequency,
+                    status = if (remainingBalance <= 0.01) "PAID" else "ACTIVE"
+                )
+                loanDao.insertLoan(loanEntity)
+                syncedCount++
+            }
+
+            Log.d("CobranzaRepository", "Delta sync completado: $syncedCount registro(s) procesados.")
+            Result.success(syncedCount)
+        } catch (e: Exception) {
+            Log.e("CobranzaRepository", "Error en Delta Sync: ${e.message}", e)
+            Result.failure(e)
+        }
     }
 
     /**

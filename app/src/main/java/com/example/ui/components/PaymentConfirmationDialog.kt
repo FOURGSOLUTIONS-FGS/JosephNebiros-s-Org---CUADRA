@@ -1,6 +1,4 @@
-﻿package com.example.ui.components
-
-import java.net.URLEncoder
+package com.example.ui.components
 
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
@@ -105,7 +103,10 @@ data class PaymentSuccessDisplay(
     val amount: Double,
     val quotaNumber: Int,
     val remainingBalance: Double,
-    val receiptText: String
+    val receiptText: String,
+    val clientPhone: String = "",
+    val clientAlias: String = "",
+    val clientAddress: String = ""
 )
 
 /**
@@ -302,6 +303,7 @@ fun PaymentSuccessModal(
     quotaNumber: Int,
     remainingBalance: Double,
     receiptText: String,
+    clientPhone: String = "",
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -405,9 +407,38 @@ fun PaymentSuccessModal(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Actions: Share via WhatsApp / Copy receipt / Return to route
+                // Primary Action: Send receipt via WhatsApp
+                Button(
+                    onClick = {
+                        com.example.util.WhatsAppReceiptHelper.sendWhatsAppMessage(
+                            context = context,
+                            phoneNumber = clientPhone,
+                            message = receiptText
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("btn_send_whatsapp_receipt"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF25D366),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = "💬 Enviar Recibo por WhatsApp",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Secondary Actions: Share / Copy receipt
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -434,13 +465,13 @@ fun PaymentSuccessModal(
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Enviar Comprobante"))
                         },
-                        modifier = Modifier.weight(1.3f),
+                        modifier = Modifier.weight(1.2f),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = EmeraldDark)
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = EmeraldMint)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Compartir", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text("Compartir", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
 
@@ -472,6 +503,7 @@ fun ClientPaymentHistoryDialog(
     onDismiss: () -> Unit,
     onViewReceipt: (receiptText: String) -> Unit
 ) {
+    val context = LocalContext.current
     val totalPaid = payments.sumOf { it.amount }
     val dateFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault())
 
@@ -628,6 +660,36 @@ fun ClientPaymentHistoryDialog(
                                             fontSize = 14.sp,
                                             color = EmeraldMint
                                         )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = {
+                                                val receipt = com.example.util.WhatsAppReceiptHelper.formatWhatsAppReceipt(
+                                                    clientName = client.name,
+                                                    aliasOrBusiness = client.aliasOrBusiness,
+                                                    address = client.address,
+                                                    amountPaid = p.amount,
+                                                    quotaNumber = p.quotaNumber,
+                                                    totalQuotas = 24,
+                                                    remainingBalance = 0.0,
+                                                    paymentMethod = p.paymentMethod,
+                                                    receiptCode = "PAG-${p.id}"
+                                                )
+                                                com.example.util.WhatsAppReceiptHelper.sendWhatsAppMessage(
+                                                    context = context,
+                                                    phoneNumber = client.phone,
+                                                    message = receipt
+                                                )
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Share,
+                                                contentDescription = "Enviar por WhatsApp",
+                                                tint = Color(0xFF25D366),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         IconButton(
                                             onClick = {
                                                 val receipt = """
@@ -652,6 +714,7 @@ fun ClientPaymentHistoryDialog(
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
+                                    }
                                     }
                                 }
                             }

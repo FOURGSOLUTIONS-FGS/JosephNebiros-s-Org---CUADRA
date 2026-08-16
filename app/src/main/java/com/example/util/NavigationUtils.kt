@@ -11,7 +11,63 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+/**
+ * Utility for handling GPS turn-by-turn navigation with Waze, Google Maps, and distance calculations.
+ */
 object NavigationUtils {
+
+    /**
+     * Launch Turn-by-Turn GPS Navigation directly in Waze with real-time traffic and alerts.
+     * Falls back to Waze Web or Google Maps if Waze is not installed.
+     */
+    fun openWazeNavigation(
+        context: Context,
+        destinationLat: Double?,
+        destinationLng: Double?,
+        destinationAddress: String = "",
+        destinationName: String = ""
+    ) {
+        try {
+            if (destinationLat != null && destinationLng != null && !destinationLat.isNaN() && !destinationLng.isNaN()) {
+                // Waze native URI format
+                val wazeUri = Uri.parse("waze://?ll=$destinationLat,$destinationLng&navigate=yes")
+                val wazeIntent = Intent(Intent.ACTION_VIEW, wazeUri).apply {
+                    setPackage("com.waze")
+                }
+
+                if (wazeIntent.resolveActivity(context.packageManager) != null) {
+                    context.startActivity(wazeIntent)
+                    return
+                }
+
+                // Fallback 1: Waze Web Deep Link (will prompt to open app or store)
+                val webWazeUri = Uri.parse("https://waze.com/ul?ll=$destinationLat,$destinationLng&navigate=yes")
+                val fallbackIntent = Intent(Intent.ACTION_VIEW, webWazeUri)
+                context.startActivity(fallbackIntent)
+            } else if (destinationAddress.isNotBlank()) {
+                val encodedAddress = Uri.encode(destinationAddress)
+                val wazeAddressUri = Uri.parse("waze://?q=$encodedAddress&navigate=yes")
+                val wazeIntent = Intent(Intent.ACTION_VIEW, wazeAddressUri).apply {
+                    setPackage("com.waze")
+                }
+
+                if (wazeIntent.resolveActivity(context.packageManager) != null) {
+                    context.startActivity(wazeIntent)
+                    return
+                }
+
+                val webWazeUri = Uri.parse("https://waze.com/ul?q=$encodedAddress&navigate=yes")
+                val fallbackIntent = Intent(Intent.ACTION_VIEW, webWazeUri)
+                context.startActivity(fallbackIntent)
+            } else {
+                Toast.makeText(context, "No hay coordenadas ni dirección para este cliente", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            // If Waze fails completely, fallback to Google Maps
+            Toast.makeText(context, "Abriendo mapa alternativo...", Toast.LENGTH_SHORT).show()
+            openGoogleMapsNavigation(context, destinationLat, destinationLng, destinationAddress, destinationName)
+        }
+    }
 
     /**
      * Launch Turn-by-Turn GPS Navigation directly in Google Maps or fallback to browser

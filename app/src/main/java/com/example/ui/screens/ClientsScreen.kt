@@ -2,7 +2,9 @@ package com.example.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,6 +86,7 @@ import com.example.ui.theme.GeometricBorderDark
 import com.example.ui.theme.OnEmeraldContainer
 import com.example.ui.theme.RoseDanger
 import com.example.ui.theme.Slate100
+import com.example.ui.theme.Slate300
 import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate500
 import com.example.ui.theme.Slate600
@@ -93,6 +96,12 @@ import com.example.ui.theme.Slate900
 import com.example.ui.theme.SlateNavy
 import com.example.ui.viewmodel.CobranzaViewModel
 import com.example.util.CurrencyUtils
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Navigation
+import com.example.util.NavigationUtils
+import com.example.util.WhatsAppReceiptHelper
 import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
@@ -360,12 +369,143 @@ fun ClientsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "📜 ${clientPayments.size} pagos registrados (Total: ${CurrencyUtils.format(clientPayments.sumOf { it.amount })})",
+                                    text = "📜 ${clientPayments.size} pagos registrados (Total: ${com.example.util.CurrencyUtils.format(clientPayments.sumOf { it.amount })})",
                                     fontSize = 11.sp,
                                     color = BlueCyan,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = BlueCyan, modifier = Modifier.size(14.dp))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Quick Action Buttons (Waze, Maps, WhatsApp, Phone, Photo, Reminders)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Waze Navigation
+                            IconButton(
+                                onClick = {
+                                    NavigationUtils.openWazeNavigation(
+                                        context = context,
+                                        destinationLat = client.latitude,
+                                        destinationLng = client.longitude,
+                                        destinationAddress = client.address,
+                                        destinationName = client.name
+                                    )
+                                },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(Color(0xFF00D4D4), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.Navigation,
+                                    contentDescription = "Waze",
+                                    tint = Color(0xFF0F172A),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
+                            // Google Maps Navigation
+                            IconButton(
+                                onClick = {
+                                    NavigationUtils.openGoogleMapsNavigation(
+                                        context = context,
+                                        destinationLat = client.latitude,
+                                        destinationLng = client.longitude,
+                                        destinationAddress = client.address,
+                                        destinationName = client.name
+                                    )
+                                },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(Color(0xFF2563EB), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.LocationOn,
+                                    contentDescription = "Google Maps",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
+                            if (client.phone.isNotEmpty()) {
+                                IconButton(
+                                    onClick = {
+                                        val reminder = WhatsAppReceiptHelper.formatPaymentReminder(
+                                            clientName = client.name,
+                                            quotaAmount = activeLoan?.quotaAmount ?: 0.0,
+                                            remainingBalance = activeLoan?.remainingBalance ?: 0.0,
+                                            quotasPending = if (activeLoan != null) (activeLoan.totalQuotas - activeLoan.paidQuotas).coerceAtLeast(0) else 0
+                                        )
+                                        WhatsAppReceiptHelper.sendWhatsAppMessage(
+                                            context = context,
+                                            phoneNumber = client.phone,
+                                            message = reminder
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(Color(0xFF25D366), CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Chat,
+                                        contentDescription = "WhatsApp Recordatorio",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${client.phone}"))
+                                        context.startActivity(intent)
+                                    },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(Slate800, CircleShape)
+                                        .border(BorderStroke(1.dp, GeometricBorderDark), CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Call,
+                                        contentDescription = "Llamar",
+                                        tint = BlueCyan,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = { selectedClientForPhoto = client },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(Slate800, CircleShape)
+                                    .border(BorderStroke(1.dp, GeometricBorderDark), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.CameraAlt,
+                                    contentDescription = "Foto Fachada",
+                                    tint = Slate300,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { selectedClientForReminders = client },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(Slate800, CircleShape)
+                                    .border(BorderStroke(1.dp, GeometricBorderDark), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.Alarm,
+                                    contentDescription = "Recordatorios",
+                                    tint = com.example.ui.theme.AmberWarning,
+                                    modifier = Modifier.size(17.dp)
+                                )
                             }
                         }
                     }

@@ -9,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -93,19 +94,35 @@ import com.example.ui.components.RemindersDialog
 import com.example.data.model.ClientEntity
 import com.example.data.model.LoanEntity
 import com.example.util.NavigationUtils
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Chat
+import com.example.ui.theme.AmberWarning
+import com.example.ui.theme.BlueCyan
+import com.example.ui.theme.DarkBackground
+import com.example.ui.theme.DarkSurfaceElevated
+import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.EmeraldContainer
 import com.example.ui.theme.EmeraldDark
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.EmeraldLight
+import com.example.ui.theme.EmeraldMint
 import com.example.ui.theme.GeometricAccent
 import com.example.ui.theme.GeometricAccentLight
+import com.example.ui.theme.GeometricBorderDark
 import com.example.ui.theme.OnEmeraldContainer
 import com.example.ui.theme.RoseContainer
 import com.example.ui.theme.RoseDanger
 import com.example.ui.theme.Slate100
+import com.example.ui.theme.Slate300
+import com.example.ui.theme.Slate400
+import com.example.ui.theme.Slate500
 import com.example.ui.theme.Slate600
 import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
+import com.example.ui.theme.Slate850
+import com.example.ui.theme.Slate900
 import com.example.ui.theme.SlateNavy
 import com.example.ui.viewmodel.CobranzaViewModel
 import java.text.NumberFormat
@@ -181,7 +198,7 @@ fun RouteScreen(
         label = "pulse_alpha"
     )
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize().background(DarkBackground)) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 96.dp)
@@ -189,7 +206,7 @@ fun RouteScreen(
             // Header Section
             item {
                 Surface(
-                    color = SlateNavy,
+                    color = Slate900,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
@@ -475,22 +492,58 @@ fun RouteScreen(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val pendingCount = dailyRouteList.count { !it.isCollectedToday }
+                    val collectedCount = dailyRouteList.count { it.isCollectedToday }
+
                     FilterChip(
                         selected = filterType == "TODOS",
                         onClick = { filterType = "TODOS" },
-                        label = { Text("Todos (${dailyRouteList.size})") },
+                        label = { Text("Todos (${dailyRouteList.size})", fontWeight = FontWeight.SemiBold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = GeometricAccent,
+                            selectedLabelColor = Color.White,
+                            containerColor = Slate900,
+                            labelColor = Slate300
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = filterType == "TODOS",
+                            borderColor = if (filterType == "TODOS") GeometricAccentLight else GeometricBorderDark
+                        ),
                         modifier = Modifier.testTag("filter_all")
                     )
                     FilterChip(
                         selected = filterType == "PENDIENTES",
                         onClick = { filterType = "PENDIENTES" },
-                        label = { Text("Pendientes (${dailyRouteList.count { !it.isCollectedToday }})") },
+                        label = { Text("Pendientes ($pendingCount)", fontWeight = FontWeight.SemiBold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = RoseDanger,
+                            selectedLabelColor = Color.White,
+                            containerColor = Slate900,
+                            labelColor = Slate300
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = filterType == "PENDIENTES",
+                            borderColor = if (filterType == "PENDIENTES") Color(0xFFFB7185) else GeometricBorderDark
+                        ),
                         modifier = Modifier.testTag("filter_pending")
                     )
                     FilterChip(
                         selected = filterType == "COBRADOS",
                         onClick = { filterType = "COBRADOS" },
-                        label = { Text("Cobrados (${dailyRouteList.count { it.isCollectedToday }})") },
+                        label = { Text("Cobrados ($collectedCount)", fontWeight = FontWeight.SemiBold) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = EmeraldGreen,
+                            selectedLabelColor = Color.White,
+                            containerColor = Slate900,
+                            labelColor = Slate300
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = filterType == "COBRADOS",
+                            borderColor = if (filterType == "COBRADOS") EmeraldMint else GeometricBorderDark
+                        ),
                         modifier = Modifier.testTag("filter_collected")
                     )
                 }
@@ -508,7 +561,7 @@ fun RouteScreen(
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = EmeraldGreen,
+                            tint = EmeraldMint,
                             modifier = Modifier.size(64.dp)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
@@ -516,13 +569,13 @@ fun RouteScreen(
                             text = if (filterType == "PENDIENTES") "¡Excelente! No hay cobros pendientes" else "No hay clientes registrados",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = SlateNavy
+                            color = Color.White
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = "Presiona el botón + para registrar clientes y créditos",
                             fontSize = 13.sp,
-                            color = Slate600
+                            color = Slate400
                         )
                     }
                 }
@@ -535,7 +588,16 @@ fun RouteScreen(
                     currentLocation = currentLocation,
                     currencyFormat = currencyFormat,
                     onCollectClick = { selectedClientForPayment = item },
-                    onNavigateClick = {
+                    onNavigateWazeClick = {
+                        NavigationUtils.openWazeNavigation(
+                            context = context,
+                            destinationLat = item.client.latitude,
+                            destinationLng = item.client.longitude,
+                            destinationAddress = item.client.address,
+                            destinationName = item.client.name
+                        )
+                    },
+                    onNavigateMapsClick = {
                         NavigationUtils.openGoogleMapsNavigation(
                             context = context,
                             destinationLat = item.client.latitude,
@@ -552,9 +614,17 @@ fun RouteScreen(
                     },
                     onWhatsAppClick = {
                         if (item.client.phone.isNotEmpty()) {
-                            val cleanNumber = item.client.phone.replace("[^0-9]".toRegex(), "")
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$cleanNumber"))
-                            context.startActivity(intent)
+                            val reminder = com.example.util.WhatsAppReceiptHelper.formatPaymentReminder(
+                                clientName = item.client.name,
+                                quotaAmount = item.activeLoan?.quotaAmount ?: 0.0,
+                                remainingBalance = item.activeLoan?.remainingBalance ?: 0.0,
+                                quotasPending = ((item.activeLoan?.totalQuotas ?: 24) - (item.activeLoan?.paidQuotas ?: 0)).coerceAtLeast(0)
+                            )
+                            com.example.util.WhatsAppReceiptHelper.sendWhatsAppMessage(
+                                context = context,
+                                phoneNumber = item.client.phone,
+                                message = reminder
+                            )
                         }
                     },
                     onPhotoClick = { selectedClientForPhoto = item },
@@ -667,7 +737,10 @@ fun RouteScreen(
                     amount = pending.amount,
                     quotaNumber = nextQ,
                     remainingBalance = newBal,
-                    receiptText = receiptText
+                    receiptText = receiptText,
+                    clientPhone = pending.client.phone,
+                    clientAlias = pending.client.aliasOrBusiness,
+                    clientAddress = pending.client.address
                 )
                 pendingConfirmation = null
             }
@@ -682,6 +755,7 @@ fun RouteScreen(
             quotaNumber = success.quotaNumber,
             remainingBalance = success.remainingBalance,
             receiptText = success.receiptText,
+            clientPhone = success.clientPhone,
             onDismiss = { paymentSuccessInfo = null }
         )
     }
@@ -753,7 +827,8 @@ fun ClientCollectionCard(
     currentLocation: android.location.Location?,
     currencyFormat: NumberFormat,
     onCollectClick: () -> Unit,
-    onNavigateClick: () -> Unit,
+    onNavigateWazeClick: () -> Unit,
+    onNavigateMapsClick: () -> Unit,
     onCallClick: () -> Unit,
     onWhatsAppClick: () -> Unit,
     onPhotoClick: () -> Unit = {},
@@ -765,16 +840,20 @@ fun ClientCollectionCard(
         NavigationUtils.formatDistance(currentLocation, item.client.latitude, item.client.longitude)
     }
 
-    ElevatedCard(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = if (isCollected) Color(0xFFF0FDF4) else Color.White
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCollected) Color(0xFF092019) else Slate900
         ),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .testTag("client_card_${item.client.id}")
+            .padding(horizontal = 16.dp, vertical = 7.dp)
+            .testTag("client_card_${item.client.id}"),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isCollected) EmeraldLight.copy(alpha = 0.45f) else GeometricBorderDark
+        )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -786,15 +865,15 @@ fun ClientCollectionCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = CircleShape,
-                            color = if (isCollected) EmeraldLight.copy(alpha = 0.2f) else GeometricAccent.copy(alpha = 0.15f),
-                            modifier = Modifier.size(24.dp)
+                            color = if (isCollected) EmeraldLight.copy(alpha = 0.2f) else GeometricAccentLight.copy(alpha = 0.2f),
+                            modifier = Modifier.size(26.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
                                     text = "#${item.client.visitOrder}",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (isCollected) EmeraldDark else GeometricAccent
+                                    color = if (isCollected) EmeraldMint else GeometricAccentLight
                                 )
                             }
                         }
@@ -803,7 +882,7 @@ fun ClientCollectionCard(
                             text = item.client.name,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            color = SlateNavy
+                            color = Color.White
                         )
                     }
 
@@ -811,9 +890,9 @@ fun ClientCollectionCard(
                         Text(
                             text = "🏬 ${item.client.aliasOrBusiness}",
                             fontSize = 13.sp,
-                            color = EmeraldDark,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(top = 2.dp)
+                            color = EmeraldMint,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 3.dp)
                         )
                     }
                     if (item.client.address.isNotEmpty()) {
@@ -821,25 +900,26 @@ fun ClientCollectionCard(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .padding(top = 4.dp)
-                                .clickable { onNavigateClick() }
+                                .clickable { onNavigateMapsClick() }
                         ) {
                             Text(
                                 text = "📍 ${item.client.address}",
                                 fontSize = 12.sp,
-                                color = Slate600
+                                color = Slate300
                             )
                             if (distanceText != null) {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
-                                    color = Slate100
+                                    color = Slate800,
+                                    border = BorderStroke(0.5.dp, GeometricBorderDark)
                                 ) {
                                     Text(
                                         text = distanceText,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = GeometricAccent,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                        color = GeometricAccentLight,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
                             }
@@ -849,14 +929,18 @@ fun ClientCollectionCard(
 
                 // Status Badge
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isCollected) EmeraldContainer else RoseContainer
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isCollected) EmeraldLight.copy(alpha = 0.18f) else RoseDanger.copy(alpha = 0.18f),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isCollected) EmeraldLight.copy(alpha = 0.5f) else RoseDanger.copy(alpha = 0.5f)
+                    )
                 ) {
                     Text(
                         text = if (isCollected) "✓ COBRADO" else "PENDIENTE",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (isCollected) OnEmeraldContainer else RoseDanger,
+                        color = if (isCollected) EmeraldMint else Color(0xFFFB7185),
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
@@ -869,36 +953,43 @@ fun ClientCollectionCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(if (isCollected) Color(0xFFDCFCE7) else Slate100, RoundedCornerShape(12.dp))
-                        .padding(12.dp),
+                        .background(if (isCollected) Color(0xFF041812) else Slate850, RoundedCornerShape(14.dp))
+                        .border(
+                            BorderStroke(
+                                width = 1.dp,
+                                color = if (isCollected) EmeraldDark.copy(alpha = 0.5f) else Slate800
+                            ),
+                            RoundedCornerShape(14.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("Cuota Diaria", fontSize = 11.sp, color = Slate600)
+                        Text("Cuota Diaria", fontSize = 11.sp, color = Slate400)
                         Text(
                             com.example.util.CurrencyUtils.format(loan.quotaAmount),
                             fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldDark
+                            fontWeight = FontWeight.ExtraBold,
+                            color = EmeraldMint
                         )
                     }
                     Column {
-                        Text("Saldo Restante", fontSize = 11.sp, color = Slate600)
+                        Text("Saldo Restante", fontSize = 11.sp, color = Slate400)
                         Text(
                             com.example.util.CurrencyUtils.format(loan.remainingBalance),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = SlateNavy
+                            color = Color.White
                         )
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("Cuotas", fontSize = 11.sp, color = Slate600)
+                        Text("Cuotas", fontSize = 11.sp, color = Slate400)
                         Text(
                             "${loan.paidQuotas}/${loan.totalQuotas}",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = SlateNavy
+                            color = Color.White
                         )
                     }
                 }
@@ -906,7 +997,7 @@ fun ClientCollectionCard(
                 Text(
                     "Sin crédito activo registrado",
                     fontSize = 13.sp,
-                    color = Slate600,
+                    color = Slate400,
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
             }
@@ -916,45 +1007,96 @@ fun ClientCollectionCard(
             // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // GPS Directions / Turn-by-Turn Navigation
+                // Waze button
                 IconButton(
-                    onClick = onNavigateClick,
+                    onClick = onNavigateWazeClick,
                     modifier = Modifier
-                        .size(40.dp)
-                        .background(Slate100, CircleShape)
+                        .size(38.dp)
+                        .background(Color(0xFF00D4D4), CircleShape)
                 ) {
                     Icon(
                         Icons.Default.Navigation,
-                        contentDescription = "Cómo llegar con Google Maps",
-                        tint = GeometricAccent,
+                        contentDescription = "Navegar con Waze",
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Google Maps button
+                IconButton(
+                    onClick = onNavigateMapsClick,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(Color(0xFF2563EB), CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = "Navegar con Google Maps",
+                        tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
                 }
 
                 if (item.client.phone.isNotEmpty()) {
                     IconButton(
+                        onClick = onWhatsAppClick,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(Color(0xFF25D366), CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.Chat,
+                            contentDescription = "WhatsApp Recordatorio",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
                         onClick = onCallClick,
                         modifier = Modifier
-                            .size(40.dp)
-                            .background(Slate100, CircleShape)
+                            .size(38.dp)
+                            .background(Slate800, CircleShape)
+                            .border(BorderStroke(1.dp, GeometricBorderDark), CircleShape)
                     ) {
-                        Icon(Icons.Default.Call, contentDescription = "Llamar", tint = Slate700, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.Call,
+                            contentDescription = "Llamar",
+                            tint = BlueCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
                 IconButton(
                     onClick = onPhotoClick,
                     modifier = Modifier
-                        .size(40.dp)
-                        .background(Slate100, CircleShape)
+                        .size(38.dp)
+                        .background(Slate800, CircleShape)
+                        .border(BorderStroke(1.dp, GeometricBorderDark), CircleShape)
                 ) {
                     Icon(
-                        Icons.Default.Add, // Or camera icon
+                        Icons.Default.CameraAlt,
                         contentDescription = "Foto de evidencia",
-                        tint = Slate700,
+                        tint = Slate300,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onReminderClick,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(Slate800, CircleShape)
+                        .border(BorderStroke(1.dp, GeometricBorderDark), CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.Alarm,
+                        contentDescription = "Recordatorio",
+                        tint = AmberWarning,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -963,24 +1105,33 @@ fun ClientCollectionCard(
                     if (isCollected) {
                         OutlinedButton(
                             onClick = onCollectClick,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = EmeraldMint),
+                            border = BorderStroke(1.dp, EmeraldLight.copy(alpha = 0.5f))
                         ) {
-                            Text("Abono Adicional", fontSize = 13.sp, color = EmeraldDark)
+                            Text("Abono Adicional", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = EmeraldMint)
                         }
                     } else {
                         Button(
                             onClick = onCollectClick,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp)
+                                .height(42.dp)
                                 .testTag("btn_collect_${item.client.id}"),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen)
                         ) {
-                            Icon(Icons.Default.MonetizationOn, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Cobrar ${com.example.util.CurrencyUtils.format(loan.quotaAmount)}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Icon(Icons.Default.MonetizationOn, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                "Cobrar ${com.example.util.CurrencyUtils.format(loan.quotaAmount)}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.White
+                            )
                         }
                     }
                 }

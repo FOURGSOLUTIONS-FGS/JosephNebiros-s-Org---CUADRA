@@ -86,6 +86,12 @@ interface PaymentDao {
     @Query("SELECT * FROM payments WHERE isSyncedWithCloud = 0")
     suspend fun getUnsyncedPayments(): List<PaymentEntity>
 
+    @Query("SELECT COUNT(*) FROM payments WHERE isSyncedWithCloud = 0")
+    fun getUnsyncedPaymentsCountFlow(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM payments WHERE isSyncedWithCloud = 0")
+    suspend fun getUnsyncedPaymentsCount(): Int
+
     @Query("UPDATE payments SET isSyncedWithCloud = 1 WHERE id = :paymentId")
     suspend fun markPaymentSynced(paymentId: Long)
 

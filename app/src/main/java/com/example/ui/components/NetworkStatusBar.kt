@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.repository.SyncState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -52,14 +53,19 @@ fun NetworkStatusBar(
     isOnline: Boolean,
     pendingSyncCount: Int,
     onSyncNow: () -> Unit,
+    syncState: SyncState = SyncState.Idle(),
     modifier: Modifier = Modifier
 ) {
-    var isSyncing by remember { mutableStateOf(false) }
+    var isManualTriggering by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    val isSyncingNow = syncState is SyncState.Syncing || isManualTriggering
 
     val backgroundColor by animateColorAsState(
         targetValue = if (isOnline) {
-            if (pendingSyncCount > 0) Color(0xFF1E3A8A) else Color(0xFF0F172A)
+            if (isSyncingNow) Color(0xFF1E3A8A)
+            else if (pendingSyncCount > 0) Color(0xFF1E3A8A)
+            else Color(0xFF0F172A)
         } else {
             Color(0xFF7C2D12) // Deep warm amber/red for offline
         },
@@ -87,28 +93,28 @@ fun NetworkStatusBar(
                     modifier = Modifier
                         .size(10.dp)
                         .clip(CircleShape)
-                        .background(if (isOnline) Color(0xFF22C55E) else Color(0xFFF97316))
+                        .background(if (isOnline) (if (isSyncingNow) Color(0xFF38BDF8) else Color(0xFF22C55E)) else Color(0xFFF97316))
                 )
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Icon(
                     imageVector = if (isOnline) Icons.Default.Wifi else Icons.Default.WifiOff,
                     contentDescription = null,
-                    tint = if (isOnline) Color(0xFF86EFAC) else Color(0xFFFDBA74),
+                    tint = if (isOnline) (if (isSyncingNow) Color(0xFF7DD3FC) else Color(0xFF86EFAC)) else Color(0xFFFDBA74),
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
 
+                val statusText = when {
+                    !isOnline -> "Modo Local Offline • Guardado seguro en SQLite/Room"
+                    syncState is SyncState.Syncing -> syncState.currentStep
+                    syncState is SyncState.Success -> "Sincronizado • ${syncState.message}"
+                    pendingSyncCount > 0 -> "En línea • $pendingSyncCount cobro(s) pendientes en Room"
+                    else -> "En línea • Sincronización activa con Supabase Cloud"
+                }
+
                 Text(
-                    text = if (isOnline) {
-                        if (pendingSyncCount > 0) {
-                            "En línea • $pendingSyncCount cobro(s) listos para subir"
-                        } else {
-                            "En línea • Sincronización activa con la Nube"
-                        }
-                    } else {
-                        "Modo Local Offline • Guardado seguro en SQLite/Room"
-                    },
+                    text = statusText,
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
@@ -123,12 +129,12 @@ fun NetworkStatusBar(
                     color = Color(0xFF3B82F6),
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
-                        .clickable(enabled = !isSyncing) {
-                            isSyncing = true
+                        .clickable(enabled = !isSyncingNow) {
+                            isManualTriggering = true
                             scope.launch {
                                 onSyncNow()
-                                kotlinx.coroutines.delay(1000)
-                                isSyncing = false
+                                kotlinx.coroutines.delay(1200)
+                                isManualTriggering = false
                             }
                         }
                 ) {
@@ -136,7 +142,7 @@ fun NetworkStatusBar(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (isSyncing) {
+                        if (isSyncingNow) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(10.dp),
                                 color = Color.White,
@@ -152,7 +158,7 @@ fun NetworkStatusBar(
                         }
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (isSyncing) "Subiendo..." else "Sincronizar ($pendingSyncCount)",
+                            text = if (isSyncingNow) "Subiendo..." else "Sincronizar ($pendingSyncCount)",
                             color = Color.White,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold

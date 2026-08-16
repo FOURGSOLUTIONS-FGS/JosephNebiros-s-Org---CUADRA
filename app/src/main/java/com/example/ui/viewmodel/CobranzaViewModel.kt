@@ -17,6 +17,9 @@ import com.example.data.model.ReminderEntity
 import com.example.data.model.RoutePointEntity
 import com.example.data.model.TrackingSessionEntity
 import com.example.data.repository.CobranzaRepository
+import com.example.data.repository.SyncManager
+import com.example.data.repository.SyncResult
+import com.example.data.repository.SyncState
 import com.example.service.LocationTrackingService
 import com.example.util.NetworkMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,8 +54,12 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
     val networkMonitor: NetworkMonitor = NetworkMonitor.getInstance(application)
     val isOnline: StateFlow<Boolean> = networkMonitor.isOnline
 
+    val syncManager: SyncManager?
+
     private val _pendingOfflineSyncCount = MutableStateFlow(0)
-    val pendingOfflineSyncCount: StateFlow<Int> = _pendingOfflineSyncCount.asStateFlow()
+    val pendingOfflineSyncCount: StateFlow<Int>
+
+    val syncState: StateFlow<SyncState>
 
     val isTrackingActive: StateFlow<Boolean> = LocationTrackingService.isTracking
     val currentLocation: StateFlow<Location?> = LocationTrackingService.currentLocation
@@ -69,15 +76,11 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
 
     init {
         val database = AppDatabase.getDatabase(application)
-        repository = CobranzaRepository(database)
+        repository = CobranzaRepository(database, networkMonitor)
+        syncManager = repository.syncManager
 
-        // Automatic trigger: when connection is re-established, sync all pending offline payments
-        networkMonitor.setOnNetworkRestoredListener {
-            viewModelScope.launch {
-                val synced = repository.syncPendingOfflinePayments()
-                refreshPendingSyncCount()
-            }
-        }
+        pendingOfflineSyncCount = syncManager?.unsyncedPaymentsCount ?: _pendingOfflineSyncCount.asStateFlow()
+        syncState = syncManager?.syncState ?: MutableStateFlow<SyncState>(SyncState.Idle()).asStateFlow()
 
         refreshPendingSyncCount()
 
@@ -120,7 +123,7 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
 
     fun refreshPendingSyncCount() {
         viewModelScope.launch {
-            val count = repository.getUnsyncedPaymentsCount()
+            val count = syncManager?.getPendingCount() ?: repository.getUnsyncedPaymentsCount()
             _pendingOfflineSyncCount.value = count
             networkMonitor.updatePendingSyncCount(count)
         }
@@ -128,9 +131,25 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
 
     fun syncPendingOfflineData(onResult: (Int) -> Unit = {}) {
         viewModelScope.launch {
-            val count = repository.syncPendingOfflinePayments()
+            val count = if (syncManager != null) {
+                val res = syncManager.syncUnsyncedChanges()
+                res.paymentsSynced
+            } else {
+                repository.syncPendingOfflinePayments()
+            }
             refreshPendingSyncCount()
             onResult(count)
+        }
+    }
+
+    fun triggerManualSync(routeCode: String = "RUTA_01", onResult: (SyncResult) -> Unit = {}) {
+        viewModelScope.launch {
+            val result = syncManager?.fullSync(routeCode) ?: run {
+                val count = repository.syncPendingOfflinePayments()
+                SyncResult(success = true, paymentsSynced = count)
+            }
+            refreshPendingSyncCount()
+            onResult(result)
         }
     }
 
@@ -274,12 +293,6 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
         photoUri: String? = null,
         onSuccess: ((Long) -> Unit)? = null
     ) {
-        if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) {
-            Log.w("CobranzaViewModel", "Intento de registro de abono inválido: $amount")
-            return
-        }
-        val cleanAmount = Math.min(amount, loan.remainingBalance)
-
         viewModelScope.launch {
             val loc = currentLocation.value
             val lat = loc?.latitude ?: client.latitude
@@ -289,7 +302,7 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
             val paymentId = repository.recordPayment(
                 loanId = loan.id,
                 clientId = client.id,
-                amount = cleanAmount,
+                amount = amount,
                 quotaNumber = nextQuotaNumber,
                 notes = notes,
                 paymentMethod = paymentMethod,
@@ -525,19 +538,90 @@ class CobranzaViewModel(application: Application) : AndroidViewModel(application
         _currentUser.value = null
     }
 
+    // Realtime WebSocket & Delta Sync observability
+    val realtimeWsState = com.example.service.SupabaseRealtimeWebSocketClient.connectionState
+    val dbWritesSavedCount = com.example.service.SupabaseRealtimeWebSocketClient.dbWritesSavedCount
+    val wsStreamedPointsCount = com.example.service.SupabaseRealtimeWebSocketClient.streamedPointsCount
+
     fun syncRouteFromSupabase(
         routeCode: String = "RUTA_BARRANQUILLA_01",
         onComplete: (Boolean, String) -> Unit = { _, _ -> }
     ) {
         viewModelScope.launch {
             _isSyncingRoute.value = true
-            val result = repository.syncRouteFromSupabase(routeCode)
-            _isSyncingRoute.value = false
-            result.onSuccess { count ->
-                onComplete(true, "Ruta sincronizada con éxito ($count facturas activas descargadas a Room).")
-            }.onFailure { error ->
-                onComplete(false, "Modo sin conexión: ${error.localizedMessage ?: "No se pudo sincronizar con Supabase"}")
+            val mgr = syncManager
+            if (mgr != null) {
+                val result = mgr.deltaSync(routeCode)
+                _isSyncingRoute.value = false
+                if (result.success) {
+                    onComplete(true, "Delta Sync exitoso: ${result.paymentsSynced} cobros subidos, ${result.invoicesMerged} facturas sincronizadas.")
+                } else {
+                    onComplete(false, "Modo sin conexión: ${result.errors.firstOrNull() ?: "Error de sincronización"}")
+                }
+            } else {
+                val result = repository.syncRouteDeltaFromSupabase(routeCode)
+                _isSyncingRoute.value = false
+                result.onSuccess { count ->
+                    onComplete(true, "Delta Sync exitoso: $count facturas procesadas.")
+                }.onFailure { err ->
+                    onComplete(false, "Modo sin conexión: ${err.message}")
+                }
+            }
+        }
+    }
+
+    fun triggerDeltaSync(
+        routeCode: String = "RUTA_BARRANQUILLA_01",
+        onComplete: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            _isSyncingRoute.value = true
+            val mgr = syncManager
+            if (mgr != null) {
+                val result = mgr.deltaSync(routeCode)
+                _isSyncingRoute.value = false
+                if (result.success) {
+                    onComplete(true, "Delta Sync completado: ${result.paymentsSynced} pagos enviados, ${result.invoicesMerged} registros actualizados.")
+                } else {
+                    onComplete(false, "Fallo en Delta Sync: ${result.errors.firstOrNull() ?: "Sin conexión"}")
+                }
+            } else {
+                val result = repository.syncRouteDeltaFromSupabase(routeCode)
+                _isSyncingRoute.value = false
+                result.onSuccess { count ->
+                    onComplete(true, "Delta Sync completado: $count registros actualizados.")
+                }.onFailure { err ->
+                    onComplete(false, "Fallo en Delta Sync: ${err.message}")
+                }
+            }
+        }
+    }
+
+    fun triggerFullSync(
+        routeCode: String = "RUTA_BARRANQUILLA_01",
+        onComplete: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            _isSyncingRoute.value = true
+            val mgr = syncManager
+            if (mgr != null) {
+                val result = mgr.fullSync(routeCode)
+                _isSyncingRoute.value = false
+                if (result.success) {
+                    onComplete(true, "Sincronización completa: ${result.paymentsSynced} cobros subidos, ${result.invoicesMerged} facturas recargadas.")
+                } else {
+                    onComplete(false, "Fallo en sincronización: ${result.errors.firstOrNull() ?: "Error de conexión"}")
+                }
+            } else {
+                val result = repository.syncRouteFromSupabase(routeCode)
+                _isSyncingRoute.value = false
+                result.onSuccess { count ->
+                    onComplete(true, "Sincronización completa: $count facturas descargadas.")
+                }.onFailure { err ->
+                    onComplete(false, "Fallo en sincronización: ${err.message}")
+                }
             }
         }
     }
 }
+

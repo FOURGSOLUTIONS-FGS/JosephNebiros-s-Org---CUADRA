@@ -313,53 +313,67 @@ fun DidiCollectorHudCard(
             // Quick Action Buttons Bar (Like DiDi / Rappi Driver Toolbar)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // 1. Google Maps Navigation Intent
+                // 1. Waze GPS Navigation Intent
                 QuickActionPill(
                     icon = Icons.Default.Directions,
-                    label = "Navegar GPS",
+                    label = "Waze",
+                    containerColor = Color(0xFF00D4D4), // Waze Cyan
+                    contentColor = Color(0xFF0F172A),
+                    onClick = {
+                        com.example.util.NavigationUtils.openWazeNavigation(
+                            context = context,
+                            destinationLat = client.latitude,
+                            destinationLng = client.longitude,
+                            destinationAddress = client.address,
+                            destinationName = client.name
+                        )
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+
+                // 2. Google Maps Navigation Intent
+                QuickActionPill(
+                    icon = Icons.Default.Navigation,
+                    label = "Maps",
                     containerColor = Color(0xFF2563EB),
                     contentColor = Color.White,
                     onClick = {
-                        val lat = client.latitude ?: 10.9885
-                        val lng = client.longitude ?: -74.7932
-                        val gmmIntentUri = Uri.parse("google.navigation:q=$lat,$lng&mode=d")
-                        val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
-                            setPackage("com.google.android.apps.maps")
-                        }
-                        try {
-                            context.startActivity(mapIntent)
-                        } catch (e: Exception) {
-                            // Fallback to browser/generic maps
-                            val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lng"))
-                            context.startActivity(fallbackIntent)
-                        }
+                        com.example.util.NavigationUtils.openGoogleMapsNavigation(
+                            context = context,
+                            destinationLat = client.latitude,
+                            destinationLng = client.longitude,
+                            destinationAddress = client.address,
+                            destinationName = client.name
+                        )
                     },
                     modifier = Modifier.weight(1f)
                 )
 
-                // 2. WhatsApp Direct Message
+                // 3. WhatsApp Direct Message & Reminder
                 QuickActionPill(
                     icon = Icons.Default.Chat,
                     label = "WhatsApp",
-                    containerColor = Color(0xFF16A34A),
+                    containerColor = Color(0xFF25D366),
                     contentColor = Color.White,
                     onClick = {
-                        val phone = client.phone.replace("[^0-9]".toRegex(), "")
-                        val formattedPhone = if (phone.startsWith("57")) phone else "57$phone"
-                        val textMsg = "Hola ${client.name}, le saluda su cobrador diario. En breves momentos pasaré por su negocio/domicilio para registrar el abono del día. ¡Muchas gracias!"
-                        val sendIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$formattedPhone?text=${Uri.encode(textMsg)}"))
-                        try {
-                            context.startActivity(sendIntent)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "No se pudo abrir WhatsApp.", Toast.LENGTH_SHORT).show()
-                        }
+                        val reminderMsg = com.example.util.WhatsAppReceiptHelper.formatPaymentReminder(
+                            clientName = client.name,
+                            quotaAmount = loan?.quotaAmount ?: 0.0,
+                            remainingBalance = loan?.remainingBalance ?: 0.0,
+                            quotasPending = ((loan?.totalQuotas ?: 24) - (loan?.paidQuotas ?: 0)).coerceAtLeast(0)
+                        )
+                        com.example.util.WhatsAppReceiptHelper.sendWhatsAppMessage(
+                            context = context,
+                            phoneNumber = client.phone,
+                            message = reminderMsg
+                        )
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1.1f)
                 )
 
-                // 3. Call direct dialer
+                // 4. Call direct dialer
                 QuickActionPill(
                     icon = Icons.Default.Call,
                     label = "Llamar",
@@ -373,27 +387,17 @@ fun DidiCollectorHudCard(
                             Toast.makeText(context, "Cliente sin teléfono registrado.", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(0.9f)
                 )
 
-                // 4. Photo Evidence
+                // 5. Photo Evidence
                 QuickActionPill(
                     icon = Icons.Default.CameraAlt,
                     label = "Foto",
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = { onPhotoClick(currentClientItem) },
-                    modifier = Modifier.weight(1f)
-                )
-
-                // 5. Reminder / Promise
-                QuickActionPill(
-                    icon = Icons.Default.Alarm,
-                    label = "Recordar",
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    onClick = { onReminderClick(currentClientItem) },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(0.9f)
                 )
             }
 
