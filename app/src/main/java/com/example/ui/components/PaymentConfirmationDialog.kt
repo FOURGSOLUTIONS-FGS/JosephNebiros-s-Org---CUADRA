@@ -1,4 +1,6 @@
-package com.example.ui.components
+﻿package com.example.ui.components
+
+import java.net.URLEncoder
 
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility

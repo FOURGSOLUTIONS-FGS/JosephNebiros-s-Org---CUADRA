@@ -108,7 +108,9 @@ object SupabaseGpsClient {
         notes: String,
         latitude: Double?,
         longitude: Double?,
-        routeCode: String = "001"
+        routeCode: String = "001",
+        distanceToClientMeters: Double = 0.0,
+        isOnSite: Boolean = true
     ): Boolean = withContext(Dispatchers.IO) {
         val nowIso = getIsoTimestamp()
         val invoiceIdStr = "F-$loanId"
@@ -124,6 +126,8 @@ object SupabaseGpsClient {
                 put("quota_number", quotaNumber)
                 if (latitude != null) put("collected_lat", latitude)
                 if (longitude != null) put("collected_lng", longitude)
+                put("distance_to_client_meters", distanceToClientMeters)
+                put("is_on_site", isOnSite)
                 put("collected_by", "COBRADOR")
                 put("notes", notes)
                 put("created_at", nowIso)

@@ -147,6 +147,13 @@ class CobranzaRepository(private val database: AppDatabase) {
                 val paidQuotas = updatedLoan?.paidQuotas ?: quotaNumber
                 val totalQuotas = updatedLoan?.totalQuotas ?: 24
 
+                var distMeters = 0.0
+                var onSite = true
+                if (latitude != null && longitude != null && client != null && client.latitude != 0.0 && client.longitude != 0.0) {
+                    distMeters = calculateDistanceMeters(latitude, longitude, client.latitude, client.longitude)
+                    onSite = distMeters <= 150.0
+                }
+
                 val success = SupabaseGpsClient.recordPaymentToSupabase(
                     loanId = loanId,
                     clientId = clientId,
@@ -160,7 +167,9 @@ class CobranzaRepository(private val database: AppDatabase) {
                     paymentMethod = paymentMethod,
                     notes = notes,
                     latitude = latitude,
-                    longitude = longitude
+                    longitude = longitude,
+                    distanceToClientMeters = distMeters,
+                    isOnSite = onSite
                 )
                 if (success) {
                     paymentDao.markPaymentSynced(paymentId)
