@@ -1,3 +1,6 @@
+﻿import android.content.Context
+import okhttp3.Authenticator
+import okhttp3.Response
 ﻿package com.example.data.remote
 
 import com.squareup.moshi.Json
@@ -213,10 +216,38 @@ object SupabaseClient {
     }
 
     var userAccessToken: String? = null
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
 
     fun setAuthToken(token: String?) {
         userAccessToken = token
     }
+
+    private val tokenAuthenticator = Authenticator { _, response ->
+        if (response.responseCount >= 2) {
+            return@Authenticator null // Evitar bucle infinito
+        }
+        val ctx = appContext ?: return@Authenticator null
+        val newToken = com.example.auth.AuthManager.refreshAccessTokenSync(ctx) ?: return@Authenticator null
+
+        response.request.newBuilder()
+            .header("Authorization", "Bearer $newToken")
+            .build()
+    }
+
+    private val Response.responseCount: Int
+        get() {
+            var result = 1
+            var prior = priorResponse
+            while (prior != null) {
+                result++
+                prior = prior.priorResponse
+            }
+            return result
+        }
 
     private val authInterceptor = Interceptor { chain ->
         val original = chain.request()
@@ -238,6 +269,7 @@ object SupabaseClient {
         OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
             .addInterceptor(loggingInterceptor)
+            .authenticator(tokenAuthenticator)
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)

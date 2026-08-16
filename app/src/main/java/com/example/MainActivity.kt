@@ -1,4 +1,4 @@
-package com.example
+﻿package com.example
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -91,6 +91,7 @@ import com.example.ui.viewmodel.CobranzaViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.data.remote.SupabaseClient.init(applicationContext)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -379,3 +380,4 @@ fun CobradorAppMain(viewModel: CobranzaViewModel = viewModel()) {
         }
     }
 }
+

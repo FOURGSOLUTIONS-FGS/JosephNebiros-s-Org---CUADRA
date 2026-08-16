@@ -58,6 +58,53 @@ object AuthManager {
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
+    const val SUPABASE_REFRESH_TOKEN_URL = "https://zgyhpjviwhckdpjmmdsx.supabase.co/auth/v1/token?grant_type=refresh_token"
+
+    fun getSavedRefreshToken(context: Context): String? {
+        return getPrefs(context).getString(KEY_REFRESH_TOKEN, null)
+    }
+
+    fun updateTokens(context: Context, newAccessToken: String, newRefreshToken: String? = null) {
+        val editor = getPrefs(context).edit().putString(KEY_ACCESS_TOKEN, newAccessToken)
+        if (!newRefreshToken.isNullOrBlank()) {
+            editor.putString(KEY_REFRESH_TOKEN, newRefreshToken)
+        }
+        editor.apply()
+        SupabaseClient.setAuthToken(newAccessToken)
+    }
+
+    fun refreshAccessTokenSync(context: Context): String? {
+        val refreshToken = getSavedRefreshToken(context) ?: return null
+        try {
+            val payload = JSONObject().apply {
+                put("refresh_token", refreshToken)
+            }.toString()
+
+            val request = Request.Builder()
+                .url(SUPABASE_REFRESH_TOKEN_URL)
+                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
+                .addHeader("apikey", SupabaseClient.apiKey)
+                .addHeader("Content-Type", "application/json")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: ""
+                val json = JSONObject(body)
+                val newAccess = json.optString("access_token")
+                val newRefresh = json.optString("refresh_token")
+                if (newAccess.isNotBlank()) {
+                    updateTokens(context, newAccess, newRefresh)
+                    Log.d(TAG, "Token de acceso renovado exitosamente de forma transparente")
+                    return newAccess
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error renovando token de acceso: ${e.message}")
+        }
+        return null
+    }
+
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
