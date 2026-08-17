@@ -16,13 +16,13 @@ import java.util.concurrent.TimeUnit
 
 object SupabaseGpsClient {
     private const val TAG = "SupabaseClient"
-    const val SUPABASE_BASE_URL = "https://zgyhpjviwhckdpjmmdsx.supabase.co/rest/v1"
+    const val SUPABASE_BASE_URL = "https://rxwwbxcvgcfhjzjjldfv.supabase.co/rest/v1"
     const val SUPABASE_GPS_URL = "$SUPABASE_BASE_URL/gps_tracking"
     const val SUPABASE_INVOICES_URL = "$SUPABASE_BASE_URL/invoices"
     const val SUPABASE_CASH_DRAWER_URL = "$SUPABASE_BASE_URL/cash_drawer"
 
     // Default Supabase Anon Key
-    var apiKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpneWhwanZpd2hja2RwbW1kc3giLCJyb2xlIjoiYW5vbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoyMDAwMDAwMDAwfQ.public-anon-key"
+    var apiKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ4d3dieGN2Z2NmaGp6ampsZGZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5MTY5MjYsImV4cCI6MjEwMjQ5MjkyNn0.W2cDzsveWtzVbOVe-djDod_Qrcmxmmj6_gXfO309iQY"
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)

@@ -45,7 +45,7 @@ sealed class RealtimeConnectionState {
 object SupabaseRealtimeWebSocketClient {
     private const val TAG = "SupabaseRealtimeWS"
 
-    private const val DEFAULT_PROJECT_REF = "zgyhpjviwhckdpjmmdsx"
+    private const val DEFAULT_PROJECT_REF = "rxwwbxcvgcfhjzjjldfv"
     private const val DEFAULT_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpneWhwanZpd2hja2RwbW1kc3giLCJyb2xlIjoiYW5vbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoyMDAwMDAwMDAwfQ.public-anon-key"
 
     var projectRef: String = DEFAULT_PROJECT_REF
